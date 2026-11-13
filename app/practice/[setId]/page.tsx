@@ -25,7 +25,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
   // สถานะหน้าสรุปภารกิจ (Mission Complete)
   const [isCompleted, setIsCompleted] = useState(false)
-  const [summaryData, setSummaryData] = useState({ score: 0, total: 0, stars: 0 })
+  const [summaryData, setSummaryData] = useState({ score: 0, total: 0, stars: 0, bonusMessage: '' })
   const [savingSummary, setSavingSummary] = useState(false)
 
   useEffect(() => {
@@ -138,27 +138,27 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
       }, { onConflict: 'user_id,problem_id' })
 
       // ถ้าตอบถูกครั้งแรก และยังไม่เคยถูกข้อนี้มาก่อน -> บวก +1 XP และ +1 Coin ให้เด็กทันที!
-        if (isCorrect && !wasAlreadyCorrect) {
-          const currentXP = (student.xp || 0) + 1
-          const currentCoins = (student.coins || 0) + 1
-          const newLevel = Math.floor(currentXP / 50) + 1
+      if (isCorrect && !wasAlreadyCorrect) {
+        const currentXP = (student.xp || 0) + 1
+        const currentCoins = (student.coins || 0) + 1
+        const newLevel = Math.floor(currentXP / 50) + 1
 
-          const updatedStudent = {
-            ...student,
-            xp: currentXP,
-            coins: currentCoins,
-            level: newLevel
-          }
-          setStudent(updatedStudent)
-
-          await supabase.from('users').update({
-            xp: currentXP,
-            coins: currentCoins,
-            level: newLevel
-          }).eq('id', student.id)
-
-          localStorage.setItem('kidscoddy_user', JSON.stringify(updatedStudent))
+        const updatedStudent = {
+          ...student,
+          xp: currentXP,
+          coins: currentCoins,
+          level: newLevel
         }
+        setStudent(updatedStudent)
+
+        await supabase.from('users').update({
+          xp: currentXP,
+          coins: currentCoins,
+          level: newLevel
+        }).eq('id', student.id)
+
+        localStorage.setItem('kidscoddy_user', JSON.stringify(updatedStudent))
+      }
     }
   }
 
@@ -176,11 +176,11 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
     if (score === total && total > 0) stars = 3
     else if (score >= total / 2) stars = 2
 
-    setSummaryData({ score, total, stars })
+    let bonusMsg = ''
 
     if (student) {
       try {
-        // 1. บันทึกผลชุดโจทย์ (แก้ไข onConflict เป็น user_id,set_id ให้ถูกต้อง)
+        // 1. บันทึกผลชุดโจทย์
         const { data: existing } = await supabase
           .from('set_completions')
           .select('stars, score')
@@ -200,7 +200,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           completed_at: new Date().toISOString()
         }, { onConflict: 'user_id,set_id' })
 
-        // 2. คำนวณ Streak รายวัน 🔥
+        // 2. คำนวณ Streak รายวัน 🔥 และโบนัสพิเศษครบ 7 วัน
         const todayStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD
         const lastActive = student.last_active_date
         let newStreak = student.streak_days || 0
@@ -219,21 +219,46 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               newStreak = 1
             }
           }
-
-          await supabase.from('users').update({
-            streak_days: newStreak,
-            last_active_date: todayStr
-          }).eq('id', student.id)
-
-          const updatedStudent = { ...student, streak_days: newStreak, last_active_date: todayStr }
-          setStudent(updatedStudent)
-          localStorage.setItem('kidscoddy_user', JSON.stringify(updatedStudent))
         }
+
+        // 🎁 เช็กเงื่อนไข: ถ้า Streak ครบ 7 วัน (7, 14, 21, ...) ให้โบนัสพิเศษ!
+        let bonusXP = 0
+        let bonusCoins = 0
+        if (newStreak > 0 && newStreak % 7 === 0) {
+          bonusXP = 10
+          bonusCoins = 10
+          bonusMsg = `🎉 สุดยอด! ทำ Streak ต่อเนื่องครบ ${newStreak} วัน รับโบนัสพิเศษทันที +10 XP และ +10 เหรียญทอง!`
+        }
+
+        const currentXP = (student.xp || 0) + bonusXP
+        const currentCoins = (student.coins || 0) + bonusCoins
+        const newLevel = Math.floor(currentXP / 50) + 1
+
+        await supabase.from('users').update({
+          streak_days: newStreak,
+          last_active_date: todayStr,
+          xp: currentXP,
+          coins: currentCoins,
+          level: newLevel
+        }).eq('id', student.id)
+
+        const updatedStudent = { 
+          ...student, 
+          streak_days: newStreak, 
+          last_active_date: todayStr,
+          xp: currentXP,
+          coins: currentCoins,
+          level: newLevel
+        }
+        setStudent(updatedStudent)
+        localStorage.setItem('kidscoddy_user', JSON.stringify(updatedStudent))
+
       } catch (err) {
         console.error('Error saving mission summary:', err)
       }
     }
 
+    setSummaryData({ score, total, stars, bonusMessage: bonusMsg })
     setSavingSummary(false)
     setIsCompleted(true)
 
@@ -258,7 +283,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
-      {/* Modal สรุปผลภารกิจ (ย้ายเข้ามาอยู่ใน return อย่างถูกต้อง) */}
+      {/* Modal สรุปผลภารกิจ (Mission Complete) */}
       {isCompleted && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-3xl p-8 max-w-md w-full text-center shadow-2xl border border-purple-100 animate-fadeIn space-y-6">
@@ -269,21 +294,24 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
             <div>
               <h3 className="text-2xl font-black text-gray-800">ภารกิจสำเร็จแล้ว!</h3>
-              <p className="text-sm text-gray-500 mt-1">ยอดเยี่ยมมาก! คุณสะสมคะแนนเพิ่มเข้าคลังเรียบร้อย</p>
+              <p className="text-sm text-gray-500 mt-1">ยอดเยี่ยมมาก! บันทึกผลคะแนนเรียบร้อยแล้ว</p>
             </div>
 
-            {/* กล่องโชว์ XP ที่ได้รับ */}
+            {/* กล่องโชว์คะแนนรอบนี้ */}
             <div className="bg-gradient-to-r from-indigo-50 to-purple-50 border border-purple-200 p-5 rounded-2xl flex items-center justify-center gap-3">
               <span className="text-3xl">✨</span>
               <div className="text-left">
-                <span className="text-xs font-bold text-purple-500 block">คะแนนที่คุณทำได้ในรอบนี้</span>
-                <span className="text-2xl font-black text-indigo-700">+{summaryData.score} XP</span>
+                <span className="text-xs font-bold text-purple-500 block">สรุปผลงานในชุดนี้</span>
+                <span className="text-2xl font-black text-indigo-700">ถูกต้อง {summaryData.score} / {summaryData.total} ข้อ</span>
               </div>
             </div>
 
-            <div className="bg-gray-50 py-3 px-4 rounded-xl text-xs font-bold text-gray-600">
-              ทำถูกต้อง <span className="text-indigo-600 font-black">{summaryData.score}</span> จากทั้งหมด <span className="text-gray-800 font-black">{summaryData.total}</span> ข้อ
-            </div>
+            {/* แสดงกล่องแจ้งเตือนโบนัสพิเศษ Streak ครบ 7 วัน */}
+            {summaryData.bonusMessage && (
+              <div className="bg-amber-50 border-2 border-amber-300 p-4 rounded-2xl text-amber-900 text-xs font-extrabold animate-pulse shadow-sm">
+                {summaryData.bonusMessage}
+              </div>
+            )}
 
             <button
               onClick={() => router.push('/dashboard')}
@@ -350,20 +378,20 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               </span>
             </div>
 
-            {/* โจทย์คำถาม */}
+            {/* โจทย์คำถาม รองรับ LaTeX */}
             <div className="text-lg md:text-xl font-extrabold text-gray-800 leading-relaxed">
               {currentProb.question_text.split('$').map((part: string, i: number) =>
                 i % 2 === 1 ? <InlineMath key={i} math={part} /> : <span key={i}>{part}</span>
               )}
             </div>
 
-            {/* แป้นพิมพ์คณิตศาสตร์ลัด (Math Keypad สำหรับเด็กจิ้ม) */}
+            {/* แป้นพิมพ์คณิตศาสตร์ลัด */}
             <div className="bg-indigo-50/70 border border-indigo-100 p-3.5 rounded-2xl space-y-2">
               <span className="text-xs font-extrabold text-indigo-900 block mb-1">
                 ⌨️ แป้นพิมพ์คณิตศาสตร์ด่วน (คลิกเพื่อพิมพ์):
               </span>
 
-              {/* แถวที่ 0: ตัวแปรยอดฮิต */}
+              {/* แถวตัวแปร */}
               <div className="flex flex-wrap gap-1.5">
                 <span className="text-[11px] font-bold text-indigo-700 self-center mr-1">ตัวแปร:</span>
                 {['x', 'y', 'z', 'a', 'b', 'c', 'n', 'π'].map((char) => (
@@ -371,14 +399,14 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                     key={char}
                     type="button"
                     onClick={() => insertSymbol(char)}
-                    className="w-9 h-9 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl border border-emerald-200 shadow-2xs transition cursor-pointer flex items-center justify-center font-mono"
+                    className="w-9 h-9 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl border border-emerald-200 transition cursor-pointer flex items-center justify-center font-mono"
                   >
                     {char}
                   </button>
                 ))}
               </div>
 
-              {/* แถวที่ 1: ตัวเลข 0-9 */}
+              {/* แถวตัวเลข */}
               <div className="flex flex-wrap gap-1.5">
                 <span className="text-[11px] font-bold text-indigo-700 self-center mr-1">ตัวเลข:</span>
                 {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.'].map((num) => (
@@ -386,14 +414,14 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                     key={num}
                     type="button"
                     onClick={() => insertSymbol(num)}
-                    className="w-9 h-9 bg-white hover:bg-indigo-100 text-indigo-800 font-extrabold text-xs rounded-xl border border-indigo-200 shadow-2xs transition cursor-pointer flex items-center justify-center"
+                    className="w-9 h-9 bg-white hover:bg-indigo-100 text-indigo-800 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer flex items-center justify-center"
                   >
                     {num}
                   </button>
                 ))}
               </div>
 
-              {/* แถวที่ 2: เครื่องหมายพื้นฐานและเครื่องหมายเปรียบเทียบ */}
+              {/* แถวเครื่องหมาย */}
               <div className="flex flex-wrap gap-1.5">
                 {[
                   { label: '+', val: '+' },
@@ -411,14 +439,14 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                     key={item.val}
                     type="button"
                     onClick={() => insertSymbol(item.val)}
-                    className="px-3 h-9 bg-purple-50 hover:bg-purple-100 text-purple-800 font-extrabold text-xs rounded-xl border border-purple-200 shadow-2xs transition cursor-pointer flex items-center justify-center"
+                    className="px-3 h-9 bg-purple-50 hover:bg-purple-100 text-purple-800 font-extrabold text-xs rounded-xl border border-purple-200 transition cursor-pointer flex items-center justify-center"
                   >
                     {item.label}
                   </button>
                 ))}
               </div>
 
-              {/* แถวที่ 3: สัญลักษณ์ขั้นสูง (ยกกำลัง, สแควรูท, วงเล็บ) และปุ่มลบ */}
+              {/* แถวสัญลักษณ์พิเศษ & ปุ่มลบ */}
               <div className="flex flex-wrap gap-1.5">
                 {[
                   { label: 'x²', val: '^2' },
@@ -432,13 +460,12 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                     key={item.val}
                     type="button"
                     onClick={() => insertSymbol(item.val)}
-                    className="px-3.5 h-8 bg-amber-50 hover:bg-amber-100 text-amber-900 font-extrabold text-xs rounded-xl border border-amber-200 shadow-2xs transition cursor-pointer flex items-center justify-center"
+                    className="px-3.5 h-8 bg-amber-50 hover:bg-amber-100 text-amber-900 font-extrabold text-xs rounded-xl border border-amber-200 transition cursor-pointer flex items-center justify-center"
                   >
                     {item.label}
                   </button>
                 ))}
 
-                {/* ปุ่มลบตัวอักษรล่าสุด (Backspace) */}
                 <button
                   type="button"
                   onClick={() => {
@@ -449,7 +476,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                       [currentProb.id]: currentVal.slice(0, -1)
                     })
                   }}
-                  className="px-3.5 h-8 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-xs rounded-xl border border-rose-200 shadow-2xs transition cursor-pointer flex items-center justify-center ml-auto"
+                  className="px-3.5 h-8 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-xs rounded-xl border border-rose-200 transition cursor-pointer flex items-center justify-center ml-auto"
                 >
                   ⌫ ลบตัวอักษร
                 </button>
@@ -559,7 +586,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                   disabled={savingSummary}
                   className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl shadow-lg transition cursor-pointer"
                 >
-                  {savingSummary ? 'กำลังบันทึก...' : '🏁 จบภารกิจ & ดู XP ที่ได้!'}
+                  {savingSummary ? 'กำลังบันทึก...' : '🏁 จบภารกิจ & ดูสรุปผล!'}
                 </button>
               )}
             </div>

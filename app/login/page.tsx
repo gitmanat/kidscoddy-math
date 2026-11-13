@@ -43,6 +43,9 @@ export default function LoginPage() {
 
       localStorage.setItem('kidscoddy_user', JSON.stringify(data))
 
+      // 🍪 เพิ่มบันทึก Role ลงใน Cookie เพื่อให้ Middleware ตรวจสอบได้ (อายุ 1 วัน)
+      document.cookie = `kidscoddy_role=${data.role}; path=/; max-age=86400; SameSite=Lax`
+
       if (data.role === 'admin') {
         router.push('/admin/exercises')
       } else {
