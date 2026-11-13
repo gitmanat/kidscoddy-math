@@ -19,17 +19,24 @@ export default function LoginPage() {
     console.log("กำลังค้นหา:", { username: username.trim().toLowerCase(), pin })
 
     try {
+      // ใช้ .maybeSingleแทน .single() เพื่อป้องกันแอปล่มเวลาเจอข้อมูลหรือหาไม่เจอ
       const { data, error: dbError } = await supabase
         .from('users')
         .select('*')
         .eq('username', username.trim().toLowerCase())
         .eq('pin_code', pin.trim())
-        .single()
+        .maybeSingle()
 
       console.log("ผลลัพธ์จาก Supabase:", { data, dbError })
 
-      if (dbError || !data) {
-        setError(`เข้าสู่ระบบไม่สำเร็จ: ${dbError?.message || 'ไม่พบข้อมูล'}`)
+      if (dbError) {
+        setError(`เกิดข้อผิดพลาดจากระบบฐานข้อมูล: ${dbError.message}`)
+        setLoading(false)
+        return
+      }
+
+      if (!data) {
+        setError('เข้าสู่ระบบไม่สำเร็จ: ไม่พบชื่อผู้ใช้หรือรหัส PIN นี้ในระบบ')
         setLoading(false)
         return
       }
