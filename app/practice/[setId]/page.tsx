@@ -137,8 +137,31 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
         attempts: 1,
       }, { onConflict: 'user_id,problem_id' })
 
-      // ถ้าตอบถูกครั้งแรก และยังไม่เคยถูกข้อนี้มาก่อน -> บวก +1 XP และ +1 Coin ให้เด็กทันที!
+      // ถ้าตอบถูกครั้งแรก และยังไม่เคยถูกข้อนี้มาก่อน -> บวก +1 XP, +1 Coin และอัปเดต Streak ทันที!
       if (isCorrect && !wasAlreadyCorrect) {
+        const todayStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+        const lastActive = student.last_active_date
+        let newStreak = student.streak_days || 0
+
+        // คำนวณ Streak ทันทีเมื่อเริ่มทำภารกิจและตอบถูก
+        if (lastActive !== todayStr) {
+          if (!lastActive) {
+            newStreak = 1
+          } else {
+            const lastDate = new Date(lastActive)
+            const currentDate = new Date(todayStr)
+            const diffDays = Math.round((currentDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24))
+
+            if (diffDays === 1) {
+              newStreak += 1
+            } else if (diffDays > 1) {
+              newStreak = 1
+            }
+          }
+        } else if (newStreak === 0) {
+          newStreak = 1
+        }
+
         const currentXP = (student.xp || 0) + 1
         const currentCoins = (student.coins || 0) + 1
         const newLevel = Math.floor(currentXP / 50) + 1
@@ -147,14 +170,18 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           ...student,
           xp: currentXP,
           coins: currentCoins,
-          level: newLevel
+          level: newLevel,
+          streak_days: newStreak,
+          last_active_date: todayStr
         }
         setStudent(updatedStudent)
 
         await supabase.from('users').update({
           xp: currentXP,
           coins: currentCoins,
-          level: newLevel
+          level: newLevel,
+          streak_days: newStreak,
+          last_active_date: todayStr
         }).eq('id', student.id)
 
         localStorage.setItem('kidscoddy_user', JSON.stringify(updatedStudent))
@@ -200,28 +227,32 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           completed_at: new Date().toISOString()
         }, { onConflict: 'user_id,set_id' })
 
-        // 2. คำนวณ Streak รายวัน 🔥 และโบนัสพิเศษครบ 7 วัน
-        const todayStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD
+        // 2. คำนวณ Streak รายวัน 🔥 และจัดการวันที่ใช้งานล่าสุด
+        const todayStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD (2026-11-14)
         const lastActive = student.last_active_date
         let newStreak = student.streak_days || 0
 
+        // เช็กว่าวันนี้เคยบันทึกไปหรือยัง
         if (lastActive !== todayStr) {
           if (!lastActive) {
-            newStreak = 1
+            newStreak = 1 // ถ้าไม่เคยมีประวัติ ให้เริ่มที่ 1 วัน
           } else {
             const lastDate = new Date(lastActive)
             const currentDate = new Date(todayStr)
             const diffDays = Math.round((currentDate.getTime() - lastDate.getTime()) / (1000 * 3600 * 24))
 
             if (diffDays === 1) {
-              newStreak += 1
+              newStreak += 1 // ถ้าทำต่อเนื่องจากเมื่อวาน บวกเพิ่ม 1 วัน
             } else if (diffDays > 1) {
-              newStreak = 1
+              newStreak = 1 // ถ้าขาดช่วงไปเกิน 1 วัน รีเซ็ตกลับมาเป็น 1
             }
+            // ถ้า diffDays === 0 คือวันเดียวกัน ไม่ต้องบวกเพิ่ม Streak ซ้ำ
           }
+        } else if (newStreak === 0) {
+          newStreak = 1 // ป้องกันกรณีค่าเดิมเป็น 0 แต่แก้อะไรไม่ได้ ให้เริ่มต้นที่ 1
         }
 
-        // 🎁 เช็กเงื่อนไข: ถ้า Streak ครบ 7 วัน (7, 14, 21, ...) ให้โบนัสพิเศษ!
+        // 🎁 เช็กเงื่อนไขโบนัสพิเศษ: ถ้า Streak ครบ 7 วัน (7, 14, 21, ...)
         let bonusXP = 0
         let bonusCoins = 0
         if (newStreak > 0 && newStreak % 7 === 0) {
@@ -230,10 +261,13 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           bonusMsg = `🎉 สุดยอด! ทำ Streak ต่อเนื่องครบ ${newStreak} วัน รับโบนัสพิเศษทันที +10 XP และ +10 เหรียญทอง!`
         }
 
+        // 3. รวมคะแนน XP และ Coins ทั้งหมด (คะแนนที่ทำได้ในรอบนี้ + โบนัสพิเศษ)
+        // หมายเหตุ: ปกติเวลาตอบถูกแต่ละข้อจะได้ +1 XP ไปแล้ว ตอนกดจบภารกิจเราจึงเอาคะแนนรวมชุดนี้อัปเดตภาพรวม
         const currentXP = (student.xp || 0) + bonusXP
         const currentCoins = (student.coins || 0) + bonusCoins
         const newLevel = Math.floor(currentXP / 50) + 1
 
+        // อัปเดปลงตาราง users ใน Supabase
         await supabase.from('users').update({
           streak_days: newStreak,
           last_active_date: todayStr,
