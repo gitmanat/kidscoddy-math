@@ -112,10 +112,10 @@ export default function StudentDashboard() {
       }
       setCompletions(compMap)
 
-      // 5. ดึงข้อมูล Leaderboard
+      // 5. ดึงข้อมูล Leaderboard (อัปเกรดให้ดึงอวตาร กรอบ และฉายามาด้วย)
       const { data: allStudents } = await supabase
         .from('users')
-        .select('id, display_name, group_name, xp, level, streak_days')
+        .select('id, display_name, group_name, xp, level, streak_days, avatar_url, avatar_frame, equipped_title')
         .eq('role', 'student')
 
       if (allStudents) {
@@ -210,6 +210,12 @@ export default function StudentDashboard() {
               className="px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
             >
               ออกจากระบบ
+            </button>
+            <button
+              onClick={() => router.push('/shop')}
+              className="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
+            >
+              🛒 ร้านค้าไอเทม
             </button>
           </div>
         </div>
@@ -406,30 +412,61 @@ export default function StudentDashboard() {
             <div className="space-y-3">
               {leaderboard.map((item, index) => {
                 const isMe = item.id === student?.id
+                
+                // กำหนดสีและกรอบตามไอเทมที่เด็กสวมใส่ (avatar_frame) หรือตามอันดับแรงก์
                 let rankBadge = 'bg-gray-100 text-gray-600'
-                if (index === 0) rankBadge = 'bg-amber-400 text-white shadow-md'
-                else if (index === 1) rankBadge = 'bg-slate-300 text-white'
-                else if (index === 2) rankBadge = 'bg-amber-700 text-white'
+                let frameStyle = 'border-2 border-gray-200'
+
+                if (item.avatar_frame === 'frame_fire') {
+                  frameStyle = 'border-3 border-orange-500 shadow-md shadow-orange-200 ring-2 ring-orange-300 animate-pulse'
+                } else if (item.avatar_frame === 'frame_gold') {
+                  frameStyle = 'border-3 border-yellow-400 shadow-md shadow-yellow-200 ring-2 ring-yellow-300'
+                } else if (item.avatar_frame === 'frame_diamond') {
+                  frameStyle = 'border-3 border-cyan-400 shadow-md shadow-cyan-200 ring-2 ring-cyan-300'
+                }
+
+                if (index === 0) rankBadge = 'bg-amber-400 text-white shadow-md font-black'
+                else if (index === 1) rankBadge = 'bg-slate-300 text-white font-black'
+                else if (index === 2) rankBadge = 'bg-amber-700 text-white font-black'
 
                 return (
                   <div
                     key={index}
                     className={`flex items-center justify-between p-4 rounded-2xl border transition ${
-                      isMe ? 'bg-indigo-50/80 border-indigo-300 ring-1 ring-indigo-200' : 'bg-gray-50/50 border-gray-100'
+                      isMe ? 'bg-indigo-50/90 border-indigo-300 ring-2 ring-indigo-200 shadow-sm' : 'bg-gray-50/50 border-gray-100'
                     }`}
                   >
                     <div className="flex items-center gap-3">
+                      {/* อันดับแรงก์ */}
                       <div className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center ${rankBadge}`}>
                         {index + 1}
                       </div>
+
+                      {/* อวตารตัวละครพร้อมกรอบสุดเท่ที่ซื้อมา */}
+                      <div className="relative">
+                        {/* อวตารตัวละครสุดเท่ (ใช้ DiceBear API สุ่มหน้าหุ่นยนต์/ตัวละครตามชื่อเด็ก) */}
+                        <div className={`w-12 h-12 rounded-2xl overflow-hidden bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-black text-lg ${frameStyle}`}>
+                          <img
+                            src={item.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(item.display_name || 'kid')}`}
+                            alt="avatar"
+                            className="w-full h-full object-cover bg-indigo-900/40"
+                          />
+                        </div>
+                        {/* เลเวลตัวจิ๋ว */}
+                        <span className="absolute -bottom-1 -right-1 bg-purple-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow">
+                          Lv.{item.level || 1}
+                        </span>
+                      </div>
+
                       <div>
                         <h4 className="font-extrabold text-gray-800 text-sm flex items-center gap-2">
                           {item.display_name}
                           {isMe && <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full">คุณ</span>}
                         </h4>
-                        <span className="text-xs text-gray-400">
-                          {item.group_name || 'ทั่วไป'} • Lv.{item.level || 1}
-                        </span>
+                        {/* แสดงฉายาพิเศษที่สวมใส่ */}
+                        <p className="text-xs text-purple-600 font-bold">
+                          {item.equipped_title || '🌱 นักคำนวณฝึกหัด'} • <span className="text-gray-400">{item.group_name || 'ทั่วไป'}</span>
+                        </p>
                       </div>
                     </div>
 
