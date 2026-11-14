@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
@@ -21,9 +21,16 @@ export default function StudentDashboard() {
   const [leaderboard, setLeaderboard] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
-  // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่ (รองรับ 100+ ชุด)
+  // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่ระดับชั้น
+  // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedGroup, setSelectedGroup] = useState('all')
+  const [todayStr, setTodayStr] = useState('')
+
+  useEffect(() => {
+    // กำหนดวันที่ปัจจุบันเฉพาะฝั่ง Client ป้องกัน Error Prerender
+    setTodayStr(new Date().toISOString().split('T')[0])
+  }, [])
 
   useEffect(() => {
     const storedUser = localStorage.getItem('kidscoddy_user')
@@ -33,6 +40,12 @@ export default function StudentDashboard() {
     }
     const userData = JSON.parse(storedUser)
     setStudent(userData)
+    
+    // ตั้งค่าตัวกรองเริ่มต้นตามระดับชั้นของนักเรียน (ถ้ามี)
+    if (userData.group_name) {
+      setSelectedGroup(userData.group_name)
+    }
+
     fetchDashboardData(userData.id)
   }, [router])
 
@@ -54,7 +67,7 @@ export default function StudentDashboard() {
       const { data: setsData } = await supabase
         .from('problem_sets')
         .select('*')
-        .order('created_at', { ascending: true })
+        .order('created_at', { ascending: false }) // เอาของใหม่ไว้ก่อน
 
       setProblemSets(setsData || [])
 
@@ -116,6 +129,47 @@ export default function StudentDashboard() {
     }
   }
 
+  // 🎯 กรองและจัดเรียงชุดแบบฝึกหัด (ดันของวันปัจจุบัน หรือของที่ยังไม่ทำขึ้นบนสุดเสมอ)
+  const filteredProblemSets = useMemo(() => {
+    return problemSets
+      .filter((set) => {
+        const setGroup = set.target_group || set.grade_level || 'ทั่วไป'
+        const matchesSearch =
+          set.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          (set.description && set.description.toLowerCase().includes(searchQuery.toLowerCase()))
+        
+        const matchesGroup =
+          selectedGroup === 'all' || setGroup === selectedGroup || setGroup === 'ทั่วไป'
+
+        return matchesSearch && matchesGroup
+      })
+      .sort((a, b) => {
+        const aDate = a.target_date || a.created_at?.split('T')[0] || ''
+        const bDate = b.target_date || b.created_at?.split('T')[0] || ''
+
+        const aIsToday = todayStr && aDate === todayStr ? 1 : 0
+        const bIsToday = todayStr && bDate === todayStr ? 1 : 0
+
+        // 1. ถ้าอันไหนตรงกับวันปัจจุบัน ให้ดันขึ้นมาอยู่อันดับบนสุด
+        if (aIsToday !== bIsToday) {
+          return bIsToday - aIsToday
+        }
+
+        // 2. จัดเรียงชุดที่ยังไม่ทำให้อยู่ก่อนชุดที่ทำเสร็จแล้ว
+        const aComp = completions[a.id]?.score || 0
+        const bComp = completions[b.id]?.score || 0
+        const aIsDone = aComp > 0 ? 1 : 0
+        const bIsDone = bComp > 0 ? 1 : 0
+
+        if (aIsDone !== bIsDone) {
+          return aIsDone - bIsDone 
+        }
+
+        // 3. เรียงตามความใหม่ของวันที่สร้าง
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+      })
+  }, [problemSets, searchQuery, selectedGroup, completions, todayStr])
+
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังโหลดภารกิจของคุณ...</div>
   }
@@ -124,14 +178,6 @@ export default function StudentDashboard() {
   const currentLevel = student?.level || 1
   const xpInThisLevel = currentXP % 50
   const xpPercentage = (xpInThisLevel / 50) * 100
-
-  // 🔍 กรองชุดแบบฝึกหัดตามคำค้นหาและระดับชั้น
-  const filteredProblemSets = problemSets.filter((set) => {
-    const matchesSearch = set.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-                          (set.description && set.description.toLowerCase().includes(searchQuery.toLowerCase()))
-    const matchesGroup = selectedGroup === 'all' || set.target_group === selectedGroup
-    return matchesSearch && matchesGroup
-  })
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
@@ -236,13 +282,13 @@ export default function StudentDashboard() {
         </div>
 
         {/* =====================================================================
-            ส่วนที่ 2: ภารกิจฝึกฝนคณิตศาสตร์ พร้อมระบบค้นหาและกรอง (100+ ชุด)
+            ส่วนที่ 2: ภารกิจฝึกฝนคณิตศาสตร์ (เรียงวันปัจจุบันขึ้นก่อน + กรองชั้นเรียน)
             ===================================================================== */}
         <div className="space-y-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
-              <h2 className="text-xl md:text-2xl font-black text-gray-800">🎯 ภารกิจฝึกฝนคณิตศาสตร์</h2>
-              <p className="text-sm text-gray-500">เลือกชุดแบบฝึกหัดที่คุณต้องการท้าทายเพื่อรับ XP และเหรียญทอง!</p>
+              <h2 className="text-xl md:text-2xl font-black text-gray-800">🎯 ภารกิจฝึกฝนคณิตศาสตร์ประจำวัน</h2>
+              <p className="text-sm text-gray-500">แบบฝึกหัดของวันนี้จะแสดงอยู่ด้านบนสุด เพื่อให้เด็กๆ ลุยทำภารกิจรักษา Streak ได้ทันที!</p>
             </div>
             <span className="text-xs font-bold px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full">
               พบทั้งหมด {filteredProblemSets.length} ชุด
@@ -286,12 +332,16 @@ export default function StudentDashboard() {
             <div className="grid gap-6 md:grid-cols-2">
               {filteredProblemSets.map((set) => {
                 const comp = completions[set.id] || { stars: 0, score: 0, total: 0 }
+                const isFinished = comp.score > 0
+
                 return (
                   <div
                     key={set.id}
-                    className="bg-white/90 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-md border border-indigo-100 hover:shadow-xl transition-all flex flex-col justify-between group relative overflow-hidden"
+                    className={`bg-white/90 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-md border transition-all flex flex-col justify-between group relative overflow-hidden ${
+                      isFinished ? 'border-emerald-200 bg-emerald-50/20' : 'border-indigo-100 hover:shadow-xl'
+                    }`}
                   >
-                    <div className="absolute top-0 left-0 right-0 h-1.5 bg-gradient-to-r from-indigo-500 to-purple-500" />
+                    <div className={`absolute top-0 left-0 right-0 h-1.5 ${isFinished ? 'bg-emerald-500' : 'bg-gradient-to-r from-indigo-500 to-purple-500'}`} />
 
                     <div>
                       <div className="flex justify-between items-start mb-3">
@@ -300,13 +350,13 @@ export default function StudentDashboard() {
                         </span>
 
                         {/* แสดงผล XP และสถานะการทำ */}
-                        <div className="flex flex-col items-end bg-purple-50 border border-purple-200 px-3.5 py-1.5 rounded-2xl">
-                          <div className="flex items-center gap-1 text-purple-700 font-black text-sm">
+                        <div className={`flex flex-col items-end px-3.5 py-1.5 rounded-2xl border ${isFinished ? 'bg-emerald-50 border-emerald-200' : 'bg-purple-50 border-purple-200'}`}>
+                          <div className={`flex items-center gap-1 font-black text-sm ${isFinished ? 'text-emerald-700' : 'text-purple-700'}`}>
                             <span>✨</span>
                             <span>{comp.score || 0} / {comp.total} XP</span>
                           </div>
-                          <span className="text-[10px] font-extrabold text-purple-400 mt-0.5">
-                            {comp.score > 0 ? 'พิชิตภารกิจแล้ว!' : 'ยังไม่เคยทำ'}
+                          <span className={`text-[10px] font-extrabold mt-0.5 ${isFinished ? 'text-emerald-600' : 'text-purple-400'}`}>
+                            {isFinished ? '✓ พิชิตภารกิจแล้ว' : '⏳ รอทำภารกิจ'}
                           </span>
                         </div>
                       </div>
@@ -321,9 +371,13 @@ export default function StudentDashboard() {
 
                     <button
                       onClick={() => router.push(`/practice/${set.id}`)}
-                      className="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-extrabold rounded-2xl shadow-lg shadow-indigo-200 transition transform active:scale-95 cursor-pointer text-center"
+                      className={`w-full py-3.5 font-extrabold rounded-2xl shadow-lg transition transform active:scale-95 cursor-pointer text-center ${
+                        isFinished
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
+                          : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-indigo-200'
+                      }`}
                     >
-                      {comp.score > 0 ? '🔄 ลุยทำใหม่อีกรอบ' : '🚀 เริ่มลุยภารกิจ!'}
+                      {isFinished ? '🔄 ทบทวน / ทำใหม่อีกรอบ' : '🚀 เริ่มลุยภารกิจวันนี้!'}
                     </button>
                   </div>
                 )
