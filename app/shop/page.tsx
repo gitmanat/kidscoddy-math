@@ -1,9 +1,11 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
+
+type CategoryTab = 'all' | 'avatar' | 'frame' | 'title' | 'owned'
 
 export default function ShopPage() {
   const router = useRouter()
@@ -11,6 +13,10 @@ export default function ShopPage() {
   const [items, setItems] = useState<any[]>([])
   const [myInventory, setMyInventory] = useState<string[]>([])
   const [loading, setLoading] = useState(true)
+
+  // 🔍 State สำหรับตัวกรองหมวดหมู่และค้นหา
+  const [selectedCategory, setSelectedCategory] = useState<CategoryTab>('all')
+  const [searchQuery, setSearchQuery] = useState('')
 
   useEffect(() => {
     const storedUser = localStorage.getItem('kidscoddy_user')
@@ -78,7 +84,7 @@ export default function ShopPage() {
       if (invErr) throw invErr
 
       alert(`🎉 เย้! ซื้อ "${item.item_name}" สำเร็จแล้ว! กดปุ่ม "สวมใส่" เพื่อใช้งานได้เลย`)
-      
+
       const updatedUser = { ...student, coins: newCoins }
       setStudent(updatedUser)
       localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
@@ -115,6 +121,29 @@ export default function ShopPage() {
       alert('สวมใส่ไม่สำเร็จ: ' + err.message)
     }
   }
+
+  // 🎯 กรองรายการสินค้าตามหมวดหมู่และคำค้นหา
+  const filteredItems = useMemo(() => {
+    return items.filter((item) => {
+      const matchesSearch = item.item_name.toLowerCase().includes(searchQuery.toLowerCase())
+      if (!matchesSearch) return false
+
+      if (selectedCategory === 'all') return true
+      if (selectedCategory === 'owned') return myInventory.includes(item.item_key)
+      return item.item_type === selectedCategory
+    })
+  }, [items, selectedCategory, searchQuery, myInventory])
+
+  // นับจำนวนสินค้าในแต่ละหมวดหมู่
+  const counts = useMemo(() => {
+    return {
+      all: items.length,
+      avatar: items.filter((i) => i.item_type === 'avatar').length,
+      frame: items.filter((i) => i.item_type === 'frame').length,
+      title: items.filter((i) => i.item_type === 'title').length,
+      owned: items.filter((i) => myInventory.includes(i.item_key)).length,
+    }
+  }, [items, myInventory])
 
   // ฟังก์ชันช่วยแสดงตัวอย่างไอคอนสินค้าในร้าน
   const renderItemPreview = (item: any) => {
@@ -157,6 +186,14 @@ export default function ShopPage() {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดประตูเข้าร้านค้าเวทมนตร์...</div>
   }
 
+  const tabs: { key: CategoryTab; label: string; count: number }[] = [
+    { key: 'all', label: '✨ ทั้งหมด', count: counts.all },
+    { key: 'avatar', label: '🤖 อวตารตัวละคร', count: counts.avatar },
+    { key: 'frame', label: '🖼️ กรอบอวตาร', count: counts.frame },
+    { key: 'title', label: '🏷️ ฉายาพิเศษ', count: counts.title },
+    { key: 'owned', label: '🎒 ของฉัน', count: counts.owned },
+  ]
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
       <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-indigo-100 px-6 py-4 sticky top-0 z-10">
@@ -196,66 +233,113 @@ export default function ShopPage() {
           <span className="text-3xl animate-bounce">🛍️</span>
         </div>
 
+        {/* 🎛️ แถบกรองหมวดหมู่สินค้า & ช่องค้นหา */}
+        <div className="bg-white/95 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-indigo-100 space-y-3">
+          <div className="flex flex-wrap gap-2">
+            {tabs.map((tab) => {
+              const isActive = selectedCategory === tab.key
+              return (
+                <button
+                  key={tab.key}
+                  onClick={() => setSelectedCategory(tab.key)}
+                  className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
+                    isActive
+                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  }`}
+                >
+                  <span>{tab.label}</span>
+                  <span
+                    className={`px-1.5 py-0.5 rounded-full text-[10px] ${
+                      isActive ? 'bg-white/25 text-white' : 'bg-white text-gray-500'
+                    }`}
+                  >
+                    {tab.count}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+
+          <input
+            type="text"
+            placeholder="🔍 ค้นหาชื่ออวตาร, กรอบ, หรือฉายา..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-xs font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
+          />
+        </div>
+
         {/* รายการสินค้าในร้าน */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {items.map((item) => {
-            const isOwned = myInventory.includes(item.item_key)
+        {filteredItems.length === 0 ? (
+          <div className="bg-white/90 rounded-3xl p-12 text-center border border-indigo-100 space-y-2">
+            <span className="text-3xl">🛍️</span>
+            <p className="text-sm font-bold text-gray-600">
+              {selectedCategory === 'owned'
+                ? 'คุณยังไม่มีไอเทมในกระเป๋าเลย ลองเลือกซื้อไอเทมชิ้นแรกดูสิ!'
+                : 'ไม่พบไอเทมที่ค้นหา'}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {filteredItems.map((item) => {
+              const isOwned = myInventory.includes(item.item_key)
 
-            // ✅ แก้ไขบั๊ก: เช็กสถานะสวมใส่แยกตามประเภทสินค้าอย่างถูกต้อง
-            let isEquipped = false
-            if (item.item_type === 'avatar') {
-              isEquipped = Boolean(student?.avatar_url && student.avatar_url === item.image_url)
-            } else if (item.item_type === 'frame') {
-              isEquipped = Boolean(student?.avatar_frame && student.avatar_frame === item.item_key)
-            } else if (item.item_type === 'title') {
-              isEquipped = Boolean(student?.equipped_title && student.equipped_title === item.item_name)
-            }
+              let isEquipped = false
+              if (item.item_type === 'avatar') {
+                isEquipped = Boolean(student?.avatar_url && student.avatar_url === item.image_url)
+              } else if (item.item_type === 'frame') {
+                isEquipped = Boolean(student?.avatar_frame && student.avatar_frame === item.item_key)
+              } else if (item.item_type === 'title') {
+                isEquipped = Boolean(student?.equipped_title && student.equipped_title === item.item_name)
+              }
 
-            return (
-              <div
-                key={item.id}
-                className="bg-white/95 backdrop-blur-sm p-5 rounded-3xl shadow-sm border border-indigo-100 flex justify-between items-center gap-4 hover:shadow-md transition"
-              >
-                <div className="flex items-center gap-3">
-                  {renderItemPreview(item)}
+              return (
+                <div
+                  key={item.id}
+                  className="bg-white/95 backdrop-blur-sm p-5 rounded-3xl shadow-sm border border-indigo-100 flex justify-between items-center gap-4 hover:shadow-md transition"
+                >
+                  <div className="flex items-center gap-3">
+                    {renderItemPreview(item)}
 
-                  <div className="space-y-1">
-                    <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-extrabold rounded-full">
-                      {item.item_type === 'avatar' ? '🤖 อวตารตัวละคร' : item.item_type === 'frame' ? '🖼️ กรอบอวตาร' : '🏷️ ฉายาพิเศษ'}
-                    </span>
-                    <h3 className="text-sm font-black text-gray-800">{item.item_name}</h3>
-                    <div className="flex items-center gap-1 text-xs font-bold text-yellow-600">
-                      <CoinIcon className="w-4 h-4" />
-                      <span>{item.price_coins} Coins</span>
+                    <div className="space-y-1">
+                      <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-extrabold rounded-full">
+                        {item.item_type === 'avatar' ? '🤖 อวตารตัวละคร' : item.item_type === 'frame' ? '🖼️ กรอบอวตาร' : '🏷️ ฉายาพิเศษ'}
+                      </span>
+                      <h3 className="text-sm font-black text-gray-800">{item.item_name}</h3>
+                      <div className="flex items-center gap-1 text-xs font-bold text-yellow-600">
+                        <CoinIcon className="w-4 h-4" />
+                        <span>{item.price_coins} Coins</span>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                <div>
-                  {isEquipped ? (
-                    <span className="px-4 py-2 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-2xl">
-                      ✓ สวมใส่อยู่
-                    </span>
-                  ) : isOwned ? (
-                    <button
-                      onClick={() => handleEquipItem(item)}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-2xl shadow transition cursor-pointer"
-                    >
-                      ✨ สวมใส่
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => handleBuyItem(item)}
-                      className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white text-xs font-extrabold rounded-2xl shadow transition cursor-pointer"
-                    >
-                      🛒 ซื้อเลย
-                    </button>
-                  )}
+                  <div>
+                    {isEquipped ? (
+                      <span className="px-4 py-2 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-2xl">
+                        ✓ สวมใส่อยู่
+                      </span>
+                    ) : isOwned ? (
+                      <button
+                        onClick={() => handleEquipItem(item)}
+                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-2xl shadow transition cursor-pointer"
+                      >
+                        ✨ สวมใส่
+                      </button>
+                    ) : (
+                      <button
+                        onClick={() => handleBuyItem(item)}
+                        className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white text-xs font-extrabold rounded-2xl shadow transition cursor-pointer"
+                      >
+                        🛒 ซื้อเลย
+                      </button>
+                    )}
+                  </div>
                 </div>
-              </div>
-            )
-          })}
-        </div>
+              )
+            })}
+          </div>
+        )}
       </main>
     </div>
   )
