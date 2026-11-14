@@ -43,12 +43,18 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
   const [problems, setProblems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
-  // State สำหรับฟอร์มเพิ่มโจทย์ใหม่
+  // State สำหรับฟอร์มเพิ่มโจทย์ทีละข้อ
   const [questionText, setQuestionText] = useState('')
   const [correctAnswer, setCorrectAnswer] = useState('')
   const [solutionText, setSolutionText] = useState('')
   const [orderNum, setOrderNum] = useState(1)
   const [isAdding, setIsAdding] = useState(false)
+
+  // State สำหรับฟอร์มนำเข้าโจทย์ชุดใหญ่ (Bulk Import JSON)
+  const [isBulkImportOpen, setIsBulkImportOpen] = useState(false)
+  const [bulkJsonText, setBulkJsonText] = useState('')
+  const [bulkImporting, setBulkImporting] = useState(false)
+  const [bulkError, setBulkError] = useState('')
 
   // State สำหรับฟอร์มแก้ไขโจทย์เดิม (Edit Problem)
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -97,7 +103,7 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
     }
   }
 
-  // เพิ่มโจทย์ใหม่
+  // เพิ่มโจทย์ใหม่ (ทีละข้อ)
   const handleAddProblem = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!questionText.trim() || !correctAnswer.trim()) return
@@ -126,15 +132,77 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
     }
   }
 
+  // นำเข้าโจทย์ชุดใหญ่ผ่าน JSON (Bulk Import)
+  const handleBulkImport = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setBulkError('')
+    if (!bulkJsonText.trim()) {
+      setBulkError('กรุณาวางข้อมูล JSON ก่อนนำเข้า')
+      return
+    }
+
+    setBulkImporting(true)
+    try {
+      let parsedData = JSON.parse(bulkJsonText)
+      if (!Array.isArray(parsedData)) {
+        throw new Error('ข้อมูล JSON ต้องเป็นรูปแบบ Array [...]')
+      }
+
+      // หา order_num เริ่มต้นถัดไปถ้าไม่ได้ระบุมา
+      let currentMaxOrder = problems.length > 0 ? Math.max(...problems.map(p => p.order_num)) : 0
+
+      const formattedRows = parsedData.map((item, idx) => {
+        currentMaxOrder += 1
+        return {
+          set_id: setId,
+          order_num: item.order_num || currentMaxOrder,
+          question_text: item.question_text,
+          answer_type: 'text',
+          correct_answer: String(item.correct_answer),
+          solution_text: item.solution_text || '',
+        }
+      })
+
+      const { error } = await supabase.from('problems').insert(formattedRows)
+
+      if (error) throw error
+
+      alert(`✅ นำเข้าโจทย์สำเร็จ ${formattedRows.length} ข้อ!`)
+      setBulkJsonText('')
+      setIsBulkImportOpen(false)
+      fetchSetAndProblems()
+    } catch (err: any) {
+      setBulkError('รูปแบบ JSON ไม่ถูกต้อง: ' + (err.message || 'กรุณาตรวจสอบโครงสร้างข้อมูล'))
+    } finally {
+      setBulkImporting(false)
+    }
+  }
+
+  // ตัวอย่างโค้ด JSON สำหรับให้คุณครูกดคัดลอกไปบอก AI
+  const sampleJsonTemplate = `[
+  {
+    "order_num": 1,
+    "question_text": "จงหาผลบวกของ $\\\\frac{1}{2} + \\\\frac{1}{3}$",
+    "correct_answer": "5/6",
+    "solution_text": "หา ค.ร.น. คือ 6\\\\nจะได้ $\\\\frac{3}{6} + \\\\frac{2}{6} = \\\\frac{5}{6}$"
+  },
+  {
+    "order_num": 2,
+    "question_text": "แก้สมการ $2x + 5 = 15$",
+    "correct_answer": "5",
+    "solution_text": "$2x = 15 - 5$\\\\n$2x = 10\\\\n$x = 5$"
+  }
+]`
+
   // เปิดโหมดแก้ไขและดึงข้อมูลเดิมมาใส่ฟอร์ม
   const startEditing = (prob: any) => {
     setEditingId(prob.id)
     setEditOrderNum(prob.order_num)
     setEditQuestionText(prob.question_text || '')
     setEditCorrectAnswer(prob.correct_answer || '')
-    // แปลง \n แบบตัวอักษรให้เป็นขึ้นบรรทัดใหม่จริงในช่อง textarea เพื่อให้อ่านและแก้ง่าย
     setEditSolutionText((prob.solution_text || '').replace(/\\n/g, '\n'))
     setIsAdding(false)
+    setIsBulkImportOpen(false)
   }
 
   // บันทึกการแก้ไขโจทย์เดิมลง Supabase
@@ -204,30 +272,98 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
 
       {/* Main */}
       <main className="max-w-4xl mx-auto px-6 mt-8">
-        <div className="flex justify-between items-center mb-6">
+        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-black text-gray-800">รายการข้อสอบในชุดนี้</h2>
-            <p className="text-sm text-gray-500">เพิ่ม แก้ไข หรือลบข้อสอบสำหรับให้นักเรียนฝึกฝน (รองรับ LaTeX ด้วยเครื่องหมาย $)</p>
+            <p className="text-sm text-gray-500">เพิ่มทีละข้อ หรือนำเข้าชุดใหญ่ 10 ข้อรวดด้วย JSON (รองรับ LaTeX)</p>
           </div>
-          <button
-            onClick={() => {
-              setIsAdding(!isAdding)
-              setEditingId(null)
-            }}
-            className="px-5 py-2.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-700 hover:to-indigo-700 text-white font-bold rounded-2xl shadow-lg shadow-purple-200 transition transform active:scale-95 cursor-pointer"
-          >
-            {isAdding ? '✕ ปิดฟอร์ม' : '+ เพิ่มข้อสอบใหม่'}
-          </button>
+          <div className="flex gap-2 w-full md:w-auto">
+            <button
+              onClick={() => {
+                setIsBulkImportOpen(!isBulkImportOpen)
+                setIsAdding(false)
+                setEditingId(null)
+              }}
+              className="flex-1 md:flex-none px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer"
+            >
+              {isBulkImportOpen ? '✕ ปิดนำเข้า' : '📥 นำเข้าโจทย์ชุดใหญ่ (JSON)'}
+            </button>
+            <button
+              onClick={() => {
+                setIsAdding(!isAdding)
+                setIsBulkImportOpen(false)
+                setEditingId(null)
+              }}
+              className="flex-1 md:flex-none px-4 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer"
+            >
+              {isAdding ? '✕ ปิดฟอร์ม' : '+ เพิ่มทีละข้อ'}
+            </button>
+          </div>
         </div>
 
-        {/* ฟอร์มเพิ่มโจทย์ข้อใหม่ */}
+        {/* 📥 กล่องนำเข้าโจทย์ชุดใหญ่ผ่าน JSON (Bulk Import) */}
+        {isBulkImportOpen && (
+          <div className="bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-xl border border-emerald-200 mb-8 space-y-4">
+            <div className="flex justify-between items-center border-b border-emerald-100 pb-3">
+              <h3 className="text-base font-black text-emerald-800">📥 นำเข้าโจทย์ชุดใหญ่ (Bulk Import JSON)</h3>
+              <button
+                onClick={() => {
+                  navigator.clipboard.writeText(sampleJsonTemplate)
+                  alert('คัดลอกโครงสร้างตัวอย่าง JSON ไปยังคลิปบอร์ดแล้ว! นำไปให้ AI เจนโจทย์มาวางได้เลยครับ')
+                }}
+                className="px-3 py-1.5 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 text-xs font-extrabold rounded-xl border border-emerald-300 transition cursor-pointer"
+              >
+                📋 คัดลอกโครงสร้าง JSON ตัวอย่าง
+              </button>
+            </div>
+
+            <p className="text-xs text-gray-600 leading-relaxed">
+              วิธีใช้: บอกให้ AI สร้างโจทย์คณิตศาสตร์ 10 ข้อในรูปแบบ <span className="font-mono font-bold text-indigo-600">JSON Array [...]</span> ตามฟิลด์ `question_text`, `correct_answer`, `solution_text` แล้วนำมาวางในช่องด้านล่างนี้ได้เลยครับ กดบันทึกครั้งเดียวเข้าฐานข้อมูลรวดเดียวจบ!
+            </p>
+
+            {bulkError && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-xl text-xs font-bold">
+                {bulkError}
+              </div>
+            )}
+
+            <form onSubmit={handleBulkImport} className="space-y-4">
+              <textarea
+                rows={8}
+                placeholder="วางโค้ด JSON ที่นี่ เช่น [ { 'question_text': '...', 'correct_answer': '...' } ]"
+                value={bulkJsonText}
+                onChange={(e) => setBulkJsonText(e.target.value)}
+                className="w-full px-4 py-3 rounded-xl border border-gray-200 font-mono text-xs focus:ring-2 focus:ring-emerald-500 outline-none"
+              />
+
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsBulkImportOpen(false)}
+                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-600 text-xs font-bold rounded-xl transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="submit"
+                  disabled={bulkImporting}
+                  className="px-6 py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl shadow transition cursor-pointer disabled:opacity-50"
+                >
+                  {bulkImporting ? 'กำลังบันทึกโจทย์ทั้งหมด...' : '🚀 ยืนยันนำเข้าโจทย์เข้าสู่ระบบ'}
+                </button>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* ฟอร์มเพิ่มโจทย์ข้อใหม่ (ทีละข้อ) */}
         {isAdding && (
           <div className="bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-xl border border-purple-100 mb-8">
             <h3 className="text-lg font-bold text-gray-800 mb-4">✨ เพิ่มโจทย์ข้อที่ {orderNum}</h3>
             <form onSubmit={handleAddProblem} className="space-y-4">
               <div>
                 <label className="block text-sm font-semibold text-gray-700 mb-1">
-                  โจทย์คำถาม (ใช้ $ คร่อมสมการ LaTeX เช่น $(3x^2 + 5x)$)
+                  โจทย์คำถาม (ใช้ $ คร่อมสมการ LaTeX เช่น $\frac{1}{2}$)
                 </label>
                 <textarea
                   rows={3}
@@ -260,7 +396,7 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
                   <input
                     type="text"
                     required
-                    placeholder="เช่น 5x^2 + 2x + 2"
+                    placeholder="เช่น 5/6 หรือ x=5"
                     value={correctAnswer}
                     onChange={(e) => setCorrectAnswer(e.target.value)}
                     className="w-full px-4 py-3 rounded-xl border border-gray-200 focus:ring-2 focus:ring-purple-500 outline-none"
@@ -269,7 +405,7 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
               </div>
 
               <div>
-                <label className="block text-sm font-semibold text-gray-700 mb-1">วิธีทำ / เฉลยละเอียด (กด Enter ขึ้นบรรทัดใหม่ได้ปกติ)</label>
+                <label className="block text-sm font-semibold text-gray-700 mb-1">วิธีทำ / เฉลยละเอียด</label>
                 <textarea
                   rows={3}
                   placeholder="อธิบายขั้นตอนวิธีทำ..."
@@ -302,7 +438,7 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
         {problems.length === 0 ? (
           <div className="bg-white/80 rounded-3xl p-12 text-center border border-purple-100 shadow-sm">
             <p className="text-gray-500 mb-2">ยังไม่มีข้อสอบในชุดนี้</p>
-            <p className="text-xs text-gray-400">กดปุ่ม "+ เพิ่มข้อสอบใหม่" ด้านบนเพื่อเริ่มสร้างโจทย์</p>
+            <p className="text-xs text-gray-400">กดปุ่ม "📥 นำเข้าโจทย์ชุดใหญ่ (JSON)" ด้านบนเพื่อเพิ่มโจทย์ 10 ข้อรวดได้เลยครับ</p>
           </div>
         ) : (
           <div className="space-y-4">
@@ -374,7 +510,7 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
 
                     <div>
                       <label className="block text-xs font-bold text-gray-700 mb-1">
-                        วิธีทำ / เฉลยละเอียด (กด Enter ขึ้นบรรทัดใหม่ได้เลย)
+                        วิธีทำ / เฉลยละเอียด
                       </label>
                       <textarea
                         rows={4}
