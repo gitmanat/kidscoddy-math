@@ -22,6 +22,7 @@ export default function StudentDashboard() {
   const [loading, setLoading] = useState(true)
 
   const [sosPendingCount, setSosPendingCount] = useState(0)
+  const [specialSetIds, setSpecialSetIds] = useState<string[]>([])
 
   // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่
   const [searchQuery, setSearchQuery] = useState('')
@@ -63,6 +64,16 @@ export default function StudentDashboard() {
       if (latestUser) {
         setStudent(latestUser)
         localStorage.setItem('kidscoddy_user', JSON.stringify(latestUser))
+      }
+      // ดึงรหัสชุดโจทย์ที่เป็นภารกิจพิเศษ เพื่อนำมาคัดกรองไม่ให้แสดงปะปนกับแบบฝึกหัดทั่วไป
+      const { data: specialQuestsData } = await supabase
+        .from('special_quests')
+        .select('target_set_id')
+        .eq('is_active', true)
+
+      if (specialQuestsData) {
+        const ids = specialQuestsData.map(q => q.target_set_id).filter(Boolean)
+        setSpecialSetIds(ids)
       }
 
       // 2. ดึงชุดแบบฝึกหัดทั้งหมด
@@ -150,10 +161,13 @@ export default function StudentDashboard() {
     }
   }
 
-  // 🎯 กรองและจัดเรียงชุดแบบฝึกหัด
+  // 🔍 กรองและจัดเรียงชุดแบบฝึกหัด (ซ่อนชุดโจทย์ที่เป็นภารกิจพิเศษไม่ให้ปะปนกับรายวัน)
   const filteredProblemSets = useMemo(() => {
     return problemSets
       .filter((set) => {
+        // ❌ กรองออกถ้าชุดโจทย์นี้เป็นภารกิจพิเศษ (เพื่อให้ไปทำที่หน้ากระดานภารกิจพิเศษแทน)
+        if (specialSetIds.includes(set.id)) return false
+
         const setGroup = set.target_group || set.grade_level || 'ทั่วไป'
         const matchesSearch =
           set.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
@@ -186,7 +200,7 @@ export default function StudentDashboard() {
 
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       })
-  }, [problemSets, searchQuery, selectedGroup, completions, todayStr])
+  }, [problemSets, specialSetIds, searchQuery, selectedGroup, completions, todayStr])
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังโหลดภารกิจของคุณ...</div>
@@ -253,6 +267,14 @@ export default function StudentDashboard() {
 
               </>
             )}
+            {/* 🎯 [ตำแหน่งเพิ่มใหม่ 1] ปุ่มทางลัดไปกระดานภารกิจพิเศษบน Header */}
+            <button
+              onClick={() => router.push('/quests')}
+              className="px-3.5 py-2 bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1 shadow-xs"
+            >
+              <span>🎯</span>
+              <span className="hidden sm:inline">ภารกิจพิเศษ</span>
+            </button>
             <button
               onClick={() => router.push('/mailbox')}
               className="relative px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
@@ -351,7 +373,7 @@ export default function StudentDashboard() {
         </div>
 
         {/* =====================================================================
-            ส่วนเสริม: ทางลัดสู่กระดานภารกิจพิเศษ (Special Quests Banner)
+            🎯 [ตำแหน่งเพิ่มใหม่ ] ส่วนเสริม: ทางลัดสู่กระดานภารกิจพิเศษ (Special Quests Banner)
             ===================================================================== */}
         <div 
           onClick={() => router.push('/quests')}

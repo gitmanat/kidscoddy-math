@@ -41,13 +41,18 @@ export default function UploadQuestsAdminPage() {
     setMessage('⏳ กำลังนำเข้าข้อมูลภารกิจพิเศษ...')
 
     try {
-      const questsArray = JSON.parse(jsonInput)
+      let questsArray = JSON.parse(jsonInput)
 
+      // 🛠️ ป้องกัน Error: ถ้าข้อมูลที่ส่งมาเป็น Object เดี่ยว (ลืมใส่ [...]) ให้แปลงเป็น Array อัตโนมัติ
       if (!Array.isArray(questsArray)) {
-        throw new Error('ข้อมูล JSON ต้องอยู่ในรูป Array [...]')
+        if (typeof questsArray === 'object' && questsArray !== null) {
+          questsArray = [questsArray]
+        } else {
+          throw new Error('ข้อมูล JSON ต้องอยู่ในรูป Array [...] หรือ Object ที่ถูกต้อง')
+        }
       }
 
-      // วนลูปinsert ข้อมูลลงตาราง special_quests
+      // วนลูป insert ข้อมูลลงตาราง special_quests[cite: 4]
       for (const q of questsArray) {
         const { error } = await supabase.from('special_quests').insert({
           title: q.title,
