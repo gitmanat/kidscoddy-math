@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
 
-type CategoryTab = 'all' | 'avatar' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title' | 'owned'
+type CategoryTab = 'all' | 'outfit' | 'pants' | 'shoes' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title' | 'owned'
 
 export default function ShopPage() {
   const router = useRouter()
@@ -99,11 +99,14 @@ export default function ShopPage() {
     try {
       let updateData: any = {}
       if (item.item_type === 'avatar') updateData.avatar_url = item.image_url
-      else if (item.item_type === 'frame') updateData.avatar_frame = item.item_key
-      else if (item.item_type === 'title') updateData.equipped_title = item.item_name
+      else if (item.item_type === 'outfit') updateData.equipped_outfit = item.image_url
+      else if (item.item_type === 'pants') updateData.equipped_pants = item.image_url
+      else if (item.item_type === 'shoes') updateData.equipped_shoes = item.image_url
       else if (item.item_type === 'hat') updateData.equipped_hat = item.image_url
       else if (item.item_type === 'glasses') updateData.equipped_glasses = item.image_url
       else if (item.item_type === 'bg') updateData.equipped_bg = item.image_url
+      else if (item.item_type === 'frame') updateData.avatar_frame = item.item_key
+      else if (item.item_type === 'title') updateData.equipped_title = item.item_name
 
       const { error } = await supabase
         .from('users')
@@ -209,11 +212,13 @@ export default function ShopPage() {
 
   const tabs: { key: CategoryTab; label: string; count: number }[] = [
     { key: 'all', label: '✨ ทั้งหมด', count: items.length },
-    { key: 'avatar', label: '🤖 ตัวละคร/ชุด', count: items.filter((i) => i.item_type === 'avatar').length },
-    { key: 'hat', label: '👑 หมวก/หัว', count: items.filter((i) => i.item_type === 'hat').length },
+    { key: 'outfit', label: '👕 เสื้อ', count: items.filter((i) => i.item_type === 'outfit').length },
+    { key: 'pants', label: '👖 กางเกง', count: items.filter((i) => i.item_type === 'pants').length },
+    { key: 'shoes', label: '👟 รองเท้า', count: items.filter((i) => i.item_type === 'shoes').length },
+    { key: 'hat', label: '👑 หมวก', count: items.filter((i) => i.item_type === 'hat').length },
     { key: 'glasses', label: '🕶️ แว่นตา', count: items.filter((i) => i.item_type === 'glasses').length },
     { key: 'bg', label: '🌌 พื้นหลัง', count: items.filter((i) => i.item_type === 'bg').length },
-    { key: 'frame', label: '🖼️ กรอบออร่า', count: items.filter((i) => i.item_type === 'frame').length },
+    { key: 'frame', label: '🖼️ กรอบ', count: items.filter((i) => i.item_type === 'frame').length },
     { key: 'title', label: '🏷️ ฉายา', count: items.filter((i) => i.item_type === 'title').length },
     { key: 'owned', label: '🎒 ของฉัน', count: items.filter((i) => myInventory.includes(i.item_key)).length },
   ]

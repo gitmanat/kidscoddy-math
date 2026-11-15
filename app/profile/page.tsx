@@ -6,13 +6,13 @@ import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
 import { AvatarDisplay } from '@/components/AvatarDisplay'
 
-type SlotCategory = 'avatar' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title'
+type SlotCategory = 'avatar' | 'outfit' | 'pants' | 'shoes' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title'
 
 export default function ProfileStudioPage() {
   const router = useRouter()
   const [student, setStudent] = useState<any>(null)
   const [inventoryItems, setInventoryItems] = useState<any[]>([])
-  const [activeTab, setActiveTab] = useState<SlotCategory>('avatar')
+  const [activeTab, setActiveTab] = useState<SlotCategory>('outfit')
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -47,11 +47,14 @@ export default function ProfileStudioPage() {
     }
   }
 
-  // สวมใส่ หรือ ถอดไอเทมออก (ส่ง null เพื่อถอด)
+  // สวมใส่ หรือ ถอดไอเทมออกตามหมวดหมู่ชิ้นส่วน
   const handleToggleEquip = async (slotType: SlotCategory, value: string | null) => {
     try {
       let updateData: any = {}
       if (slotType === 'avatar') updateData.avatar_url = value
+      else if (slotType === 'outfit') updateData.equipped_outfit = value
+      else if (slotType === 'pants') updateData.equipped_pants = value
+      else if (slotType === 'shoes') updateData.equipped_shoes = value
       else if (slotType === 'hat') updateData.equipped_hat = value
       else if (slotType === 'glasses') updateData.equipped_glasses = value
       else if (slotType === 'bg') updateData.equipped_bg = value
@@ -73,13 +76,17 @@ export default function ProfileStudioPage() {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดตู้เสื้อผ้าเวทมนตร์...</div>
   }
 
+  // 8 หมวดหมู่ชิ้นส่วนหลัก + ฉายา
   const slotTabs: { key: SlotCategory; label: string; icon: string }[] = [
-    { key: 'avatar', label: 'ตัวละคร/ชุด', icon: '🤖' },
+    { key: 'outfit', label: 'เสื้อผ้าหลัก', icon: '👕' },
+    { key: 'pants', label: 'กางเกง', icon: '👖' },
+    { key: 'shoes', label: 'รองเท้า', icon: '👟' },
     { key: 'hat', label: 'หมวก/หัว', icon: '👑' },
     { key: 'glasses', label: 'แว่นตา', icon: '🕶️' },
     { key: 'bg', label: 'พื้นหลัง', icon: '🌌' },
     { key: 'frame', label: 'กรอบออร่า', icon: '🖼️' },
     { key: 'title', label: 'ฉายา', icon: '🏷️' },
+    { key: 'avatar', label: 'ฐานอวตาร', icon: '🤖' },
   ]
 
   const currentTabItems = inventoryItems.filter((item) => item.item_type === activeTab)
@@ -87,6 +94,9 @@ export default function ProfileStudioPage() {
   // ตรวจสอบว่าไอเทมชิ้นนี้สวมใส่อยู่หรือไม่
   const checkIsEquipped = (item: any) => {
     if (item.item_type === 'avatar') return student?.avatar_url === item.image_url
+    if (item.item_type === 'outfit') return student?.equipped_outfit === item.image_url
+    if (item.item_type === 'pants') return student?.equipped_pants === item.image_url
+    if (item.item_type === 'shoes') return student?.equipped_shoes === item.image_url
     if (item.item_type === 'hat') return student?.equipped_hat === item.image_url
     if (item.item_type === 'glasses') return student?.equipped_glasses === item.image_url
     if (item.item_type === 'bg') return student?.equipped_bg === item.image_url
@@ -105,8 +115,8 @@ export default function ProfileStudioPage() {
               🎨
             </div>
             <div>
-              <h1 className="font-extrabold text-gray-800 text-base">Avatar Studio แต่งตัวละคร</h1>
-              <p className="text-xs text-purple-600 font-bold">มิกซ์แอนด์แมทช์สไตล์ที่เป็นคุณ!</p>
+              <h1 className="font-extrabold text-gray-800 text-base">Roblox-Style Avatar Studio</h1>
+              <p className="text-xs text-purple-600 font-bold">ห้องแต่งตัวละครแบบละเอียดทุกชิ้นส่วน</p>
             </div>
           </div>
 
@@ -128,7 +138,7 @@ export default function ProfileStudioPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 mt-8 space-y-6">
-        {/* เวทีโชว์ตัวละคร Live Preview (สไตล์ Roblox) */}
+        {/* เวทีโชว์ตัวละคร Live Preview (Roblox Style) */}
         <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-visible">
           <div className="flex flex-col md:flex-row items-center gap-6 z-10">
             <div className="pt-4">
@@ -157,31 +167,20 @@ export default function ProfileStudioPage() {
             </div>
           </div>
 
-          {/* สรุปช่องสวมใส่ปัจจุบัน */}
-          <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl w-full md:w-64 space-y-2 text-xs">
-            <p className="font-black text-amber-200 uppercase tracking-wider text-[10px]">อุปกรณ์ที่สวมใส่อยู่</p>
-            <div className="flex justify-between">
-              <span className="text-purple-100">👑 หมวก:</span>
-              <span className="font-bold">{student?.equipped_hat || 'ไม่ได้ใส่'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-purple-100">🕶️ แว่นตา:</span>
-              <span className="font-bold">{student?.equipped_glasses || 'ไม่ได้ใส่'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-purple-100">🌌 พื้นหลัง:</span>
-              <span className="font-bold">{student?.equipped_bg ? 'ใส่แล้ว ✨' : 'ค่าเริ่มต้น'}</span>
-            </div>
-            <div className="flex justify-between">
-              <span className="text-purple-100">🖼️ กรอบออร่า:</span>
-              <span className="font-bold">{student?.avatar_frame || 'ค่าเริ่มต้น'}</span>
-            </div>
+          {/* สรุปชิ้นส่วนที่สวมใส่อยู่ปัจจุบัน */}
+          <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl w-full md:w-64 space-y-1.5 text-xs">
+            <p className="font-black text-amber-200 uppercase tracking-wider text-[10px] mb-1">สวมใส่ปัจจุบัน</p>
+            <div className="flex justify-between"><span className="text-purple-100">👕 เสื้อ:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_outfit ? 'ใส่แล้ว' : 'ไม่ได้ใส่'}</span></div>
+            <div className="flex justify-between"><span className="text-purple-100">👖 กางเกง:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_pants ? 'ใส่แล้ว' : 'ไม่ได้ใส่'}</span></div>
+            <div className="flex justify-between"><span className="text-purple-100">👑 หมวก:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_hat || 'ไม่ได้ใส่'}</span></div>
+            <div className="flex justify-between"><span className="text-purple-100">🕶️ แว่นตา:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_glasses || 'ไม่ได้ใส่'}</span></div>
+            <div className="flex justify-between"><span className="text-purple-100">🖼️ กรอบ:</span><span className="font-bold truncate max-w-[120px]">{student?.avatar_frame || 'ค่าเริ่มต้น'}</span></div>
           </div>
         </div>
 
-        {/* ตู้เสื้อผ้าเลือกเปลี่ยนชิ้นส่วน */}
+        {/* ตู้เสื้อผ้าเลือกเปลี่ยนชิ้นส่วน (8+ หมวดหมู่) */}
         <div className="bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-md border border-indigo-100 space-y-6">
-          {/* แถบเลือกหมวดหมู่ชิ้นส่วน */}
+          {/* แถบเลือกหมวดหมู่ */}
           <div className="flex flex-wrap gap-2 border-b border-gray-100 pb-4">
             {slotTabs.map((tab) => {
               const isSelected = activeTab === tab.key
@@ -189,7 +188,7 @@ export default function ProfileStudioPage() {
                 <button
                   key={tab.key}
                   onClick={() => setActiveTab(tab.key)}
-                  className={`px-4 py-2.5 rounded-2xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
+                  className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
                     isSelected
                       ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
                       : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
@@ -204,14 +203,14 @@ export default function ProfileStudioPage() {
 
           {/* รายการไอเทมในหมวดหมู่ที่เลือก */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {/* การ์ด "ถอดออก / ใช้ค่าเริ่มต้น" */}
+            {/* การ์ดถอดออก */}
             <div
               onClick={() => handleToggleEquip(activeTab, null)}
               className="p-4 rounded-2xl border-2 border-dashed border-gray-300 hover:border-rose-400 bg-gray-50 hover:bg-rose-50/40 flex flex-col items-center justify-center gap-2 cursor-pointer transition min-h-[140px]"
             >
               <span className="text-2xl">🚫</span>
               <span className="text-xs font-extrabold text-gray-600 text-center">ถอดชิ้นส่วนนี้</span>
-              <span className="text-[10px] text-gray-400">(รีเซ็ตช่องนี้)</span>
+              <span className="text-[10px] text-gray-400">(รีเซ็ตค่าเริ่มต้น)</span>
             </div>
 
             {currentTabItems.map((item) => {
@@ -233,7 +232,6 @@ export default function ProfileStudioPage() {
                       : 'border-gray-200 bg-white hover:border-indigo-300'
                   }`}
                 >
-                  {/* รูปตัวอย่างไอเทม */}
                   <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center overflow-hidden text-3xl">
                     {item.item_type === 'bg' ? (
                       <div className="w-full h-full" style={{ background: item.image_url }} />
@@ -259,8 +257,8 @@ export default function ProfileStudioPage() {
           </div>
 
           {currentTabItems.length === 0 && (
-            <div className="text-center py-6 space-y-2">
-              <p className="text-xs text-gray-500 font-bold">คุณยังไม่มีไอเทมในหมวดนี้เลยครับ</p>
+            <div className="text-center py-8 space-y-2">
+              <p className="text-xs text-gray-500 font-bold">คุณยังไม่มีไอเทมในหมวดหมู่นี้เลยครับ</p>
               <button
                 onClick={() => router.push('/shop')}
                 className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-xl shadow cursor-pointer"
