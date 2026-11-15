@@ -21,7 +21,6 @@ export default function StudentDashboard() {
   const [leaderboard, setLeaderboard] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
-  // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่ระดับชั้น
   // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedGroup, setSelectedGroup] = useState('all')
@@ -67,7 +66,7 @@ export default function StudentDashboard() {
       const { data: setsData } = await supabase
         .from('problem_sets')
         .select('*')
-        .order('created_at', { ascending: false }) // เอาของใหม่ไว้ก่อน
+        .order('created_at', { ascending: false })
 
       setProblemSets(setsData || [])
 
@@ -112,7 +111,7 @@ export default function StudentDashboard() {
       }
       setCompletions(compMap)
 
-      // 5. ดึงข้อมูล Leaderboard (อัปเกรดให้ดึงอวตาร กรอบ และฉายามาด้วย)
+      // 5. ดึงข้อมูล Leaderboard
       const { data: allStudents } = await supabase
         .from('users')
         .select('id, display_name, group_name, xp, level, streak_days, avatar_url, avatar_frame, equipped_title')
@@ -129,7 +128,7 @@ export default function StudentDashboard() {
     }
   }
 
-  // 🎯 กรองและจัดเรียงชุดแบบฝึกหัด (ดันของวันปัจจุบัน หรือของที่ยังไม่ทำขึ้นบนสุดเสมอ)
+  // 🎯 กรองและจัดเรียงชุดแบบฝึกหัด
   const filteredProblemSets = useMemo(() => {
     return problemSets
       .filter((set) => {
@@ -150,12 +149,10 @@ export default function StudentDashboard() {
         const aIsToday = todayStr && aDate === todayStr ? 1 : 0
         const bIsToday = todayStr && bDate === todayStr ? 1 : 0
 
-        // 1. ถ้าอันไหนตรงกับวันปัจจุบัน ให้ดันขึ้นมาอยู่อันดับบนสุด
         if (aIsToday !== bIsToday) {
           return bIsToday - aIsToday
         }
 
-        // 2. จัดเรียงชุดที่ยังไม่ทำให้อยู่ก่อนชุดที่ทำเสร็จแล้ว
         const aComp = completions[a.id]?.score || 0
         const bComp = completions[b.id]?.score || 0
         const aIsDone = aComp > 0 ? 1 : 0
@@ -165,7 +162,6 @@ export default function StudentDashboard() {
           return aIsDone - bIsDone 
         }
 
-        // 3. เรียงตามความใหม่ของวันที่สร้าง
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
       })
   }, [problemSets, searchQuery, selectedGroup, completions, todayStr])
@@ -182,7 +178,7 @@ export default function StudentDashboard() {
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
       <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-indigo-100 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-5xl mx-auto flex justify-between items-center">
+        <div className="max-w-5xl mx-auto flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-indigo-600 to-purple-600 text-white flex items-center justify-center font-black text-lg shadow-md shadow-indigo-200">
               KC
@@ -193,29 +189,37 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {student?.role === 'admin' && (
-              <button
-                onClick={() => router.push('/admin/exercises')}
-                className="px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 text-xs font-extrabold rounded-xl transition cursor-pointer"
-              >
-                ⚙️ ไปหน้าแอดมิน
-              </button>
+              <>
+                <button
+                  onClick={() => router.push('/admin/exercises')}
+                  className="px-3.5 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 text-xs font-extrabold rounded-xl transition cursor-pointer"
+                >
+                  ⚙️ จัดการข้อสอบ
+                </button>
+                <button
+                  onClick={() => router.push('/admin/quests')}
+                  className="px-3.5 py-2 bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs font-extrabold rounded-xl transition cursor-pointer"
+                >
+                  🎯 จัดการเควส
+                </button>
+              </>
             )}
+            <button
+              onClick={() => router.push('/shop')}
+              className="px-3.5 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
+            >
+              🛒 ร้านค้าไอเทม
+            </button>
             <button
               onClick={() => {
                 localStorage.removeItem('kidscoddy_user')
                 router.push('/login')
               }}
-              className="px-4 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
+              className="px-3.5 py-2 text-xs font-bold text-rose-600 hover:bg-rose-50 rounded-xl transition cursor-pointer"
             >
               ออกจากระบบ
-            </button>
-            <button
-              onClick={() => router.push('/shop')}
-              className="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
-            >
-              🛒 ร้านค้าไอเทม
             </button>
           </div>
         </div>
@@ -284,6 +288,36 @@ export default function StudentDashboard() {
                 style={{ width: `${Math.min(xpPercentage, 100)}%` }}
               />
             </div>
+          </div>
+        </div>
+
+        {/* =====================================================================
+            ส่วนเสริม: ทางลัดสู่กระดานภารกิจพิเศษ (Special Quests Banner)
+            ===================================================================== */}
+        <div 
+          onClick={() => router.push('/quests')}
+          className="bg-gradient-to-r from-rose-500 via-pink-500 to-purple-600 rounded-3xl p-6 text-white shadow-xl cursor-pointer hover:scale-[1.01] transition transform flex flex-col md:flex-row justify-between items-center gap-4 relative overflow-hidden"
+        >
+          <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
+          
+          <div className="flex items-center space-x-4 relative z-10">
+            <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl shadow-inner shrink-0">
+              🎯
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="px-2.5 py-0.5 bg-yellow-300 text-yellow-900 text-[10px] font-black rounded-full">
+                  ⭐ ท้าทายพิเศษ
+                </span>
+                <span className="text-xs text-rose-100 font-bold">รับ Coins & XP จัดเต็ม!</span>
+              </div>
+              <h3 className="text-lg md:text-xl font-black mt-1">กระดานภารกิจพิเศษ & ของรางวัล</h3>
+              <p className="text-xs text-rose-100">คลิกเพื่อดูโจทย์ท้าทายประจำวันและกวาดรางวัลพิเศษกันเถอะ!</p>
+            </div>
+          </div>
+
+          <div className="px-6 py-3 bg-white text-rose-600 font-black text-xs rounded-2xl shadow-md hover:bg-rose-50 transition relative z-10 shrink-0">
+            ลุยภารกิจเลย →
           </div>
         </div>
 
@@ -413,7 +447,6 @@ export default function StudentDashboard() {
               {leaderboard.map((item, index) => {
                 const isMe = item.id === student?.id
                 
-                // กำหนดสีและกรอบตามไอเทมที่เด็กสวมใส่ (avatar_frame) หรือตามอันดับแรงก์
                 let rankBadge = 'bg-gray-100 text-gray-600'
                 let frameStyle = 'border-2 border-gray-200'
 
@@ -437,14 +470,11 @@ export default function StudentDashboard() {
                     }`}
                   >
                     <div className="flex items-center gap-3">
-                      {/* อันดับแรงก์ */}
                       <div className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center ${rankBadge}`}>
                         {index + 1}
                       </div>
 
-                      {/* อวตารตัวละครพร้อมกรอบสุดเท่ที่ซื้อมา */}
                       <div className="relative">
-                        {/* อวตารตัวละครสุดเท่ (ใช้ DiceBear API สุ่มหน้าหุ่นยนต์/ตัวละครตามชื่อเด็ก) */}
                         <div className={`w-12 h-12 rounded-2xl overflow-hidden bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-black text-lg ${frameStyle}`}>
                           <img
                             src={item.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(item.display_name || 'kid')}`}
@@ -452,7 +482,6 @@ export default function StudentDashboard() {
                             className="w-full h-full object-cover bg-indigo-900/40"
                           />
                         </div>
-                        {/* เลเวลตัวจิ๋ว */}
                         <span className="absolute -bottom-1 -right-1 bg-purple-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow">
                           Lv.{item.level || 1}
                         </span>
@@ -463,7 +492,6 @@ export default function StudentDashboard() {
                           {item.display_name}
                           {isMe && <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full">คุณ</span>}
                         </h4>
-                        {/* แสดงฉายาพิเศษที่สวมใส่ */}
                         <p className="text-xs text-purple-600 font-bold">
                           {item.equipped_title || '🌱 นักคำนวณฝึกหัด'} • <span className="text-gray-400">{item.group_name || 'ทั่วไป'}</span>
                         </p>
@@ -471,13 +499,11 @@ export default function StudentDashboard() {
                     </div>
 
                     <div className="flex items-center gap-4">
-                      {/* Streak ไฟ */}
                       <div className="hidden sm:flex items-center gap-1 text-xs font-bold text-amber-600 bg-amber-50 px-3 py-1.5 rounded-xl border border-amber-100">
                         <span>🔥</span>
                         <span>{item.streak_days || 0} วัน</span>
                       </div>
 
-                      {/* คะแนน XP */}
                       <div className="flex items-center gap-1.5 bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100">
                         <span className="text-base">✨</span>
                         <span className="text-sm font-black text-indigo-600">{item.xp || 0} XP</span>

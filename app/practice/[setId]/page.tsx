@@ -212,6 +212,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
     if (student) {
       try {
+        
         // 1. บันทึกผลชุดโจทย์
         const { data: existing } = await supabase
           .from('set_completions')
@@ -260,10 +261,40 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
         let bonusXP = 0
         let bonusCoins = 0
+
+        // เช็กโบนัส Streak ครบ 7 วัน
         if (newStreak > 0 && newStreak % 7 === 0) {
-          bonusXP = 10
-          bonusCoins = 10
-          bonusMsg = `🎉 สุดยอด! ทำ Streak ต่อเนื่องครบ ${newStreak} วัน รับโบนัสพิเศษทันที +10 XP และ +10 เหรียญทอง!`
+          bonusXP += 10
+          bonusCoins += 10
+          bonusMsg = `🎉 สุดยอด! ทำ Streak ต่อเนื่องครบ ${newStreak} วัน รับโบนัสพิเศษทันที +10 XP และ +10 เหรียญทอง!\n`
+        }
+
+        // 🌟 3. เช็กเงื่อนไขภารกิจพิเศษ (Special Quests)
+        const { data: questMatch } = await supabase
+          .from('special_quests')
+          .select('*')
+          .eq('target_set_id', setId)
+          .eq('is_active', true)
+          .maybeSingle()
+
+        if (questMatch) {
+          const { data: alreadyDone } = await supabase
+            .from('quest_completions')
+            .select('id')
+            .eq('user_id', student.id)
+            .eq('quest_id', questMatch.id)
+            .maybeSingle()
+
+          if (!alreadyDone && stars >= 1) {
+            await supabase.from('quest_completions').insert({
+              user_id: student.id,
+              quest_id: questMatch.id,
+            })
+
+            bonusXP += (questMatch.reward_xp || 15)
+            bonusCoins += (questMatch.reward_coins || 10)
+            bonusMsg += `⭐ พิชิตภารกิจพิเศษ "${questMatch.title}" สำเร็จ! รับรางวัล +${questMatch.reward_coins} Coins และ +${questMatch.reward_xp} XP!`
+          }
         }
 
         const currentXP = (student.xp || 0) + bonusXP
