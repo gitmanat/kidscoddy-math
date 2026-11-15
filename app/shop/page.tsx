@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
 
-type CategoryTab = 'all' | 'avatar' | 'frame' | 'title' | 'owned'
+type CategoryTab = 'all' | 'avatar' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title' | 'owned'
 
 export default function ShopPage() {
   const router = useRouter()
@@ -94,17 +94,16 @@ export default function ShopPage() {
     }
   }
 
-  // สวมใส่ไอเทม (อวตาร, กรอบ, หรือฉายา)
+  // สวมใส่ไอเทม (รองรับทุกชิ้นส่วนแบบ Roblox)
   const handleEquipItem = async (item: any) => {
     try {
       let updateData: any = {}
-      if (item.item_type === 'avatar') {
-        updateData.avatar_url = item.image_url
-      } else if (item.item_type === 'frame') {
-        updateData.avatar_frame = item.item_key
-      } else if (item.item_type === 'title') {
-        updateData.equipped_title = item.item_name
-      }
+      if (item.item_type === 'avatar') updateData.avatar_url = item.image_url
+      else if (item.item_type === 'frame') updateData.avatar_frame = item.item_key
+      else if (item.item_type === 'title') updateData.equipped_title = item.item_name
+      else if (item.item_type === 'hat') updateData.equipped_hat = item.image_url
+      else if (item.item_type === 'glasses') updateData.equipped_glasses = item.image_url
+      else if (item.item_type === 'bg') updateData.equipped_bg = item.image_url
 
       const { error } = await supabase
         .from('users')
@@ -145,8 +144,9 @@ export default function ShopPage() {
     }
   }, [items, myInventory])
 
-  // ฟังก์ชันช่วยแสดงตัวอย่างไอคอนสินค้าในร้าน
+  // ฟังก์ชันช่วยแสดงตัวอย่างไอคอนสินค้าในร้าน (รองรับทุกประเภทแบบละเอียด)
   const renderItemPreview = (item: any) => {
+    // 1. ถ้าเป็นอวตารตัวละคร (Avatar)
     if (item.item_type === 'avatar' && item.image_url) {
       return (
         <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 overflow-hidden shrink-0 p-1">
@@ -155,6 +155,26 @@ export default function ShopPage() {
       )
     }
 
+    // 2. ถ้าเป็นพื้นหลัง (Background - bg) -> แสดงเป็นกล่องสีไล่ระดับตาม CSS ที่กำหนดใน image_url
+    if (item.item_type === 'bg') {
+      return (
+        <div 
+          className="w-14 h-14 rounded-2xl border border-indigo-100 shrink-0 shadow-inner" 
+          style={{ background: item.image_url }} 
+        />
+      )
+    }
+
+    // 3. ถ้าเป็นหมวก (Hat) หรือ แว่นตา (Glasses) -> แสดง Emoji หรือไอคอนตัวใหญ่ๆ ตรงกลางกล่อง
+    if (item.item_type === 'hat' || item.item_type === 'glasses') {
+      return (
+        <div className="w-14 h-14 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-3xl shrink-0 shadow-xs">
+          {item.image_url}
+        </div>
+      )
+    }
+
+    // 4. ถ้าเป็นกรอบอวตาร (Frame)
     if (item.item_type === 'frame') {
       let frameClass = 'border-2 border-gray-300'
       let icon = '🖼️'
@@ -175,6 +195,7 @@ export default function ShopPage() {
       )
     }
 
+    // 5. ค่าเริ่มต้นสำหรับไอเทมอื่นๆ (เช่น ฉายา)
     return (
       <div className="w-14 h-14 rounded-2xl bg-purple-100 flex items-center justify-center text-2xl shrink-0">
         🏷️
@@ -187,11 +208,14 @@ export default function ShopPage() {
   }
 
   const tabs: { key: CategoryTab; label: string; count: number }[] = [
-    { key: 'all', label: '✨ ทั้งหมด', count: counts.all },
-    { key: 'avatar', label: '🤖 อวตารตัวละคร', count: counts.avatar },
-    { key: 'frame', label: '🖼️ กรอบอวตาร', count: counts.frame },
-    { key: 'title', label: '🏷️ ฉายาพิเศษ', count: counts.title },
-    { key: 'owned', label: '🎒 ของฉัน', count: counts.owned },
+    { key: 'all', label: '✨ ทั้งหมด', count: items.length },
+    { key: 'avatar', label: '🤖 ตัวละคร/ชุด', count: items.filter((i) => i.item_type === 'avatar').length },
+    { key: 'hat', label: '👑 หมวก/หัว', count: items.filter((i) => i.item_type === 'hat').length },
+    { key: 'glasses', label: '🕶️ แว่นตา', count: items.filter((i) => i.item_type === 'glasses').length },
+    { key: 'bg', label: '🌌 พื้นหลัง', count: items.filter((i) => i.item_type === 'bg').length },
+    { key: 'frame', label: '🖼️ กรอบออร่า', count: items.filter((i) => i.item_type === 'frame').length },
+    { key: 'title', label: '🏷️ ฉายา', count: items.filter((i) => i.item_type === 'title').length },
+    { key: 'owned', label: '🎒 ของฉัน', count: items.filter((i) => myInventory.includes(i.item_key)).length },
   ]
 
   return (

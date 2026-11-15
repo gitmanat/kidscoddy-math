@@ -1,5 +1,6 @@
 'use client'
 
+import { AvatarDisplay } from '@/components/AvatarDisplay'
 import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -65,6 +66,7 @@ export default function StudentDashboard() {
         setStudent(latestUser)
         localStorage.setItem('kidscoddy_user', JSON.stringify(latestUser))
       }
+
       // ดึงรหัสชุดโจทย์ที่เป็นภารกิจพิเศษ เพื่อนำมาคัดกรองไม่ให้แสดงปะปนกับแบบฝึกหัดทั่วไป
       const { data: specialQuestsData } = await supabase
         .from('special_quests')
@@ -125,10 +127,10 @@ export default function StudentDashboard() {
       }
       setCompletions(compMap)
 
-      // 5. ดึงข้อมูล Leaderboard
+      // 5. ดึงข้อมูล Leaderboard (รวมชิ้นส่วนอวตารทั้งหมดของเพื่อนๆ)
       const { data: allStudents } = await supabase
         .from('users')
-        .select('id, display_name, group_name, xp, level, streak_days, avatar_url, avatar_frame, equipped_title')
+        .select('id, display_name, group_name, xp, level, streak_days, avatar_url, avatar_frame, equipped_title, equipped_hat, equipped_glasses, equipped_bg')
         .eq('role', 'student')
 
       if (allStudents) {
@@ -264,10 +266,10 @@ export default function StudentDashboard() {
                     </span>
                   )}
                 </button>
-
               </>
             )}
-            {/* 🎯 [ตำแหน่งเพิ่มใหม่ 1] ปุ่มทางลัดไปกระดานภารกิจพิเศษบน Header */}
+
+            {/* 🎯 ปุ่มทางลัดไปกระดานภารกิจพิเศษบน Header */}
             <button
               onClick={() => router.push('/quests')}
               className="px-3.5 py-2 bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1 shadow-xs"
@@ -275,6 +277,7 @@ export default function StudentDashboard() {
               <span>🎯</span>
               <span className="hidden sm:inline">ภารกิจพิเศษ</span>
             </button>
+
             <button
               onClick={() => router.push('/mailbox')}
               className="relative px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
@@ -287,12 +290,23 @@ export default function StudentDashboard() {
                 </span>
               )}
             </button>
+
             <button
               onClick={() => router.push('/shop')}
               className="px-3.5 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
             >
               🛒 ร้านค้าไอเทม
             </button>
+
+            {/* 🎨 ปุ่มทางลัดไปหน้าโปรไฟล์และแต่งตัวละคร */}
+            <button
+              onClick={() => router.push('/profile')}
+              className="px-3.5 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1 shadow-xs"
+            >
+              <span>🎨</span>
+              <span className="hidden sm:inline">โปรไฟล์ & แต่งตัว</span>
+            </button>
+
             <button
               onClick={() => {
                 localStorage.removeItem('kidscoddy_user')
@@ -311,25 +325,37 @@ export default function StudentDashboard() {
         {/* =====================================================================
             ส่วนที่ 1: Gamification Profile Card (Level, Streak, Coins, XP)
             ===================================================================== */}
-        <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-hidden">
-          <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
+        <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-visible">
+          <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
+            <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12" />
+          </div>
 
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative z-10">
-            <div className="space-y-2">
-              <div className="flex items-center gap-2">
-                <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-extrabold">
-                  ⭐ Level {currentLevel}
-                </span>
-                <span className="text-xs font-bold text-purple-200">
-                  {getLevelTitle(currentLevel)}
-                </span>
+            
+            {/* 🎨 แสดง AvatarDisplay แบบครบทุกเลเยอร์ พร้อมคลิกไปหน้าแต่งตัว */}
+            <div className="flex items-center gap-5 pt-2">
+              <AvatarDisplay
+                user={student}
+                size="md"
+                onClick={() => router.push('/profile')}
+              />
+
+              <div className="space-y-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="px-3 py-0.5 bg-white/20 backdrop-blur-md rounded-full text-xs font-extrabold">
+                    ⭐ Level {currentLevel}
+                  </span>
+                  <span className="text-xs font-bold text-purple-200">
+                    {student?.equipped_title || getLevelTitle(currentLevel)}
+                  </span>
+                </div>
+                <h2 className="text-xl md:text-2xl font-black">
+                  สู้ๆ นะครับ, {student?.display_name}! 🚀
+                </h2>
+                <p className="text-xs text-purple-100">
+                  สะสม XP เลเวลอัป และเก็บ Coins ไปแลกรางวัลจริงกัน! (คลิกที่ตัวละครเพื่อแต่งตัว)
+                </p>
               </div>
-              <h2 className="text-2xl md:text-3xl font-black">
-                สู้ๆ นะครับ, {student?.display_name}! 🚀
-              </h2>
-              <p className="text-xs text-purple-100">
-                สะสม XP เลเวลอัป และเก็บ Coins ไปแลกรางวัลจริงกัน!
-              </p>
             </div>
 
             {/* สถิติ Streak, Coins, XP */}
@@ -373,7 +399,7 @@ export default function StudentDashboard() {
         </div>
 
         {/* =====================================================================
-            🎯 [ตำแหน่งเพิ่มใหม่ ] ส่วนเสริม: ทางลัดสู่กระดานภารกิจพิเศษ (Special Quests Banner)
+            ส่วนเสริม: ทางลัดสู่กระดานภารกิจพิเศษ (Special Quests Banner)
             ===================================================================== */}
         <div 
           onClick={() => router.push('/quests')}
@@ -529,16 +555,6 @@ export default function StudentDashboard() {
                 const isMe = item.id === student?.id
                 
                 let rankBadge = 'bg-gray-100 text-gray-600'
-                let frameStyle = 'border-2 border-gray-200'
-
-                if (item.avatar_frame === 'frame_fire') {
-                  frameStyle = 'border-3 border-orange-500 shadow-md shadow-orange-200 ring-2 ring-orange-300 animate-pulse'
-                } else if (item.avatar_frame === 'frame_gold') {
-                  frameStyle = 'border-3 border-yellow-400 shadow-md shadow-yellow-200 ring-2 ring-yellow-300'
-                } else if (item.avatar_frame === 'frame_diamond') {
-                  frameStyle = 'border-3 border-cyan-400 shadow-md shadow-cyan-200 ring-2 ring-cyan-300'
-                }
-
                 if (index === 0) rankBadge = 'bg-amber-400 text-white shadow-md font-black'
                 else if (index === 1) rankBadge = 'bg-slate-300 text-white font-black'
                 else if (index === 2) rankBadge = 'bg-amber-700 text-white font-black'
@@ -550,23 +566,13 @@ export default function StudentDashboard() {
                       isMe ? 'bg-indigo-50/90 border-indigo-300 ring-2 ring-indigo-200 shadow-sm' : 'bg-gray-50/50 border-gray-100'
                     }`}
                   >
-                    <div className="flex items-center gap-3">
-                      <div className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center ${rankBadge}`}>
+                    <div className="flex items-center gap-3.5">
+                      <div className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 ${rankBadge}`}>
                         {index + 1}
                       </div>
 
-                      <div className="relative">
-                        <div className={`w-12 h-12 rounded-2xl overflow-hidden bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-white font-black text-lg ${frameStyle}`}>
-                          <img
-                            src={item.avatar_url || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(item.display_name || 'kid')}`}
-                            alt="avatar"
-                            className="w-full h-full object-cover bg-indigo-900/40"
-                          />
-                        </div>
-                        <span className="absolute -bottom-1 -right-1 bg-purple-600 text-white text-[9px] font-black px-1.5 py-0.5 rounded-full shadow">
-                          Lv.{item.level || 1}
-                        </span>
-                      </div>
+                      {/* 🏆 แสดงตัวละครของเพื่อนๆ ครบทุกชิ้นส่วน */}
+                      <AvatarDisplay user={item} size="sm" showLevel={true} />
 
                       <div>
                         <h4 className="font-extrabold text-gray-800 text-sm flex items-center gap-2">
