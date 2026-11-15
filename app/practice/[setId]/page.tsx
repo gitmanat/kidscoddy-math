@@ -19,6 +19,9 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
   const [currentIndex, setCurrentIndex] = useState(0)
   const [loading, setLoading] = useState(true)
 
+  const [isSosModalOpen, setIsSosModalOpen] = useState(false)
+  const [sosMessage, setSosMessage] = useState('')
+
   // เก็บคำตอบและสถานะการตรวจของแต่ละข้อ { [problemId]: string }
   const [userAnswers, setUserAnswers] = useState<{ [key: string]: string }>({})
   const [results, setResults] = useState<{ [key: string]: { isCorrect: boolean; checked: boolean; showSolution: boolean } }>({})
@@ -91,6 +94,48 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
   }
 
   const currentProb = problems[currentIndex]
+  // 🚨 ฟังก์ชันกดส่ง SOS ขอความช่วยเหลือจากคุณครู
+  const handleSendSOS = async () => {
+    if (!currentProb || !student) return
+    try {
+      const { error } = await supabase.from('student_sos_requests').insert({
+        student_id: student.id,
+        set_id: setId,
+        problem_id: currentProb.id,
+        question_text: currentProb.question_text,
+        status: 'pending'
+      })
+
+      if (error) throw error
+      alert('🚨 ส่งสัญญาณขอความช่วยเหลือไปยังคุณครูเรียบร้อยแล้ว! รอคุณครูมาแนะนำข้อนี้นะครับ')
+    } catch (err) {
+      console.error('Error sending SOS:', err)
+      alert('❌ ไม่สามารถส่งสัญญาณได้ กรุณาลองใหม่อีกครั้ง')
+    }
+  }
+
+  const handleSendSOSWithNote = async () => {
+    if (!currentProb || !student) return
+    try {
+      const { error } = await supabase.from('student_sos_requests').insert({
+        student_id: student.id,
+        set_id: setId,
+        problem_id: currentProb.id,
+        question_text: currentProb.question_text,
+        student_note: sosMessage.trim() || 'ติดโจทย์ข้อนี้ ไม่แน่ใจวิธีทำ', // บันทึกข้อความที่เด็กพิมพ์
+        status: 'pending'
+      })
+
+      if (error) throw error
+      alert('🚨 ส่งสัญญาณขอความช่วยเหลือและข้อความถึงคุณครูเรียบร้อยแล้วครับ!')
+      setIsSosModalOpen(false)
+      setSosMessage('')
+    } catch (err) {
+      console.error('Error sending SOS:', err)
+      alert('❌ ไม่สามารถส่งสัญญาณได้ กรุณาลองใหม่อีกครั้ง')
+    }
+  }
+
 
   // ตรวจคำตอบอัจฉริยะด้วย mathjs
   const handleCheckAnswer = async () => {
@@ -552,7 +597,17 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
             {/* ฟอร์มกรอกคำตอบ */}
             <div className="space-y-3">
-              <label className="block text-xs font-bold text-gray-500">คำตอบของคุณ:</label>
+              <div className="flex justify-between items-center">
+                <label className="block text-xs font-bold text-gray-500">คำตอบของคุณ:</label>
+                <button
+                  type="button"
+                  onClick={() => setIsSosModalOpen(true)}
+                  className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-extrabold rounded-xl border border-rose-200 transition cursor-pointer flex items-center gap-1 shadow-xs"
+                >
+                  <span>🙋‍♂️</span> ติดโจทย์? ขอความช่วยเหลือจากคุณครู
+                </button>
+              </div>
+
               <div className="flex gap-2">
                 <input
                   type="text"
@@ -656,6 +711,50 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                   {savingSummary ? 'กำลังบันทึก...' : '🏁 จบภารกิจ & ดูสรุปผล!'}
                 </button>
               )}
+            </div>
+          </div>
+        )}
+
+        {/* Modal พิมพ์ข้อความ SOS */}
+        {isSosModalOpen && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-3xl p-6 md:p-8 max-w-md w-full shadow-2xl border border-rose-100 space-y-4">
+              <div className="flex items-center gap-3">
+                <span className="text-3xl">🙋‍♂️</span>
+                <div>
+                  <h3 className="font-black text-gray-800 text-base">ขอความช่วยเหลือจากคุณครู</h3>
+                  <p className="text-xs text-gray-500">บอกให้คุณครูรู้หน่อยครับว่าติดปัญหาตรงไหน?</p>
+                </div>
+              </div>
+
+              <div className="p-3 bg-indigo-50/60 rounded-2xl border border-indigo-100 text-xs text-indigo-900 font-bold">
+                📌 โจทย์ข้อนี้: {currentProb.question_text}
+              </div>
+
+              <textarea
+                rows={3}
+                value={sosMessage}
+                onChange={(e) => setSosMessage(e.target.value)}
+                placeholder="พิมพ์อธิบายปัญหา เช่น 'หนูกดลบเศษส่วนตรงวิธีทำไม่ถูกค่ะ' หรือ 'งงการแปลงตัวส่วน'..."
+                className="w-full p-4 rounded-2xl border border-gray-200 text-xs font-semibold outline-none focus:ring-2 focus:ring-rose-500 bg-gray-50"
+              />
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSosModalOpen(false)}
+                  className="flex-1 py-3 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-extrabold rounded-2xl transition cursor-pointer"
+                >
+                  ยกเลิก
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSendSOSWithNote}
+                  className="flex-1 py-3 bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold rounded-2xl shadow-md transition cursor-pointer"
+                >
+                  🚨 ส่งสัญญาณ SOS
+                </button>
+              </div>
             </div>
           </div>
         )}

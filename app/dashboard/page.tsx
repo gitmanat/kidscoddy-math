@@ -21,10 +21,13 @@ export default function StudentDashboard() {
   const [leaderboard, setLeaderboard] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
 
+  const [sosPendingCount, setSosPendingCount] = useState(0)
+
   // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedGroup, setSelectedGroup] = useState('all')
   const [todayStr, setTodayStr] = useState('')
+  const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
     // กำหนดวันที่ปัจจุบันเฉพาะฝั่ง Client ป้องกัน Error Prerender
@@ -121,6 +124,25 @@ export default function StudentDashboard() {
         const rankedList = allStudents.sort((a, b) => (b.xp || 0) - (a.xp || 0))
         setLeaderboard(rankedList)
       }
+
+      // 7. นับจำนวนเคส SOS ที่ยังค้างอยู่ (สำหรับแอดมิน)
+      if (latestUser?.role === 'admin') {
+        const { count: sosCount } = await supabase
+          .from('student_sos_requests')
+          .select('*', { count: 'exact', head: true })
+          .eq('status', 'pending')
+
+        setSosPendingCount(sosCount || 0)
+      }
+
+      // 6. นับจำนวนจดหมายที่ยังไม่ได้เปิดอ่าน
+      const { count } = await supabase
+        .from('student_messages')
+        .select('*', { count: 'exact', head: true })
+        .eq('receiver_id', userId)
+        .eq('is_read', false)
+
+      setUnreadCount(count || 0)
     } catch (err) {
       console.error('Error:', err)
     } finally {
@@ -189,7 +211,7 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex flex-wrap items-center gap-2 sm:gap-3">
             {student?.role === 'admin' && (
               <>
                 <button
@@ -204,8 +226,45 @@ export default function StudentDashboard() {
                 >
                   🎯 จัดการเควส
                 </button>
+                <button
+                  onClick={() => router.push('/admin/messages')}
+                  className="px-3.5 py-2 bg-sky-100 hover:bg-sky-200 text-sky-700 text-xs font-extrabold rounded-xl transition cursor-pointer"
+                >
+                  ✉️ ส่งจดหมาย
+                </button>
+
+                {/* 🚨 ปุ่มจัดการ SOS (จะกระพริบและแสดงตัวเลขเฉพาะตอนมีเด็กส่ง SOS ค้างอยู่) */}
+                <button
+                  onClick={() => router.push('/admin/sos')}
+                  className={`relative px-3.5 py-2 text-xs font-extrabold rounded-xl transition cursor-pointer shadow-sm flex items-center gap-1.5 ${
+                    sosPendingCount > 0
+                      ? 'bg-rose-500 hover:bg-rose-600 text-white animate-pulse'
+                      : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                  }`}
+                >
+                  <span>🚨</span>
+                  <span>จัดการ SOS</span>
+                  {sosPendingCount > 0 && (
+                    <span className="w-5 h-5 bg-white text-rose-600 text-[10px] font-black rounded-full flex items-center justify-center shadow">
+                      {sosPendingCount}
+                    </span>
+                  )}
+                </button>
+
               </>
             )}
+            <button
+              onClick={() => router.push('/mailbox')}
+              className="relative px-3.5 py-2 bg-amber-50 hover:bg-amber-100 text-amber-800 border border-amber-200 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
+            >
+              <span>📬</span>
+              <span className="hidden sm:inline">จดหมาย</span>
+              {unreadCount > 0 && (
+                <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-rose-500 text-white text-[10px] font-black rounded-full flex items-center justify-center shadow animate-bounce">
+                  {unreadCount}
+                </span>
+              )}
+            </button>
             <button
               onClick={() => router.push('/shop')}
               className="px-3.5 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
