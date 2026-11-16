@@ -18,7 +18,7 @@ export default function AdminQuestsListPage() {
     description: '',
     reward_coins: 0,
     reward_xp: 0,
-    problem_set_id: '',
+    target_set_id: '',
   })
   const [saving, setSaving] = useState(false)
 
@@ -27,7 +27,7 @@ export default function AdminQuestsListPage() {
   const [createForm, setCreateForm] = useState({
     title: '',
     description: '',
-    problem_set_id: '',
+    target_set_id: '',
     reward_coins: 50,
     reward_xp: 100,
     is_active: true,
@@ -41,7 +41,6 @@ export default function AdminQuestsListPage() {
 
   const fetchAdminQuests = async () => {
     try {
-      // ดึงข้อมูลภารกิจทั้งหมดก่อน
       const { data: questsData, error: questsErr } = await supabase
         .from('special_quests')
         .select('*')
@@ -49,7 +48,6 @@ export default function AdminQuestsListPage() {
 
       if (questsErr) throw questsErr
 
-      // ดึงข้อมูลชุดโจทย์ทั้งหมดมาแมตช์ด้วยตัวเอง (ปลอดภัยที่สุด ไม่ติดปัญหา Multiple Relationships)
       const { data: setsData } = await supabase
         .from('problem_sets')
         .select('id, title')
@@ -58,7 +56,7 @@ export default function AdminQuestsListPage() {
 
       const combined = (questsData || []).map((q: any) => ({
         ...q,
-        problem_sets: q.problem_set_id ? setsMap.get(q.problem_set_id) || null : null,
+        problem_sets: q.target_set_id ? setsMap.get(q.target_set_id) || null : null,
       }))
 
       setQuests(combined)
@@ -69,7 +67,6 @@ export default function AdminQuestsListPage() {
     }
   }
 
-  // ดึงรายการชุดโจทย์ทั้งหมดมาใช้ทั้งตอนสร้างใหม่ (Manual) และตอนแก้ไข
   const fetchProblemSets = async () => {
     try {
       const { data } = await supabase
@@ -82,7 +79,7 @@ export default function AdminQuestsListPage() {
     }
   }
 
-  // บันทึกภารกิจใหม่แบบ Manual ลง Supabase
+  // บันทึกภารกิจใหม่แบบ Manual ลง Supabase (ใช้ target_set_id)
   const handleCreateManualQuest = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -90,7 +87,7 @@ export default function AdminQuestsListPage() {
       alert('กรุณากรอกชื่อภารกิจด้วยครับ')
       return
     }
-    if (!createForm.problem_set_id) {
+    if (!createForm.target_set_id) {
       alert('กรุณาเลือกชุดโจทย์ที่ผูกกับภารกิจนี้ครับ')
       return
     }
@@ -100,13 +97,12 @@ export default function AdminQuestsListPage() {
       const insertPayload = {
         title: createForm.title.trim(),
         description: createForm.description.trim(),
-        problem_set_id: createForm.problem_set_id,
+        target_set_id: createForm.target_set_id,
         reward_coins: Number(createForm.reward_coins) || 0,
         reward_xp: Number(createForm.reward_xp) || 0,
         is_active: createForm.is_active,
       }
 
-      // บันทึกข้อมูลลงฐานข้อมูลโดยไม่ต้องผูก Embed ซ้อนกันตรงๆ
       const { data, error } = await supabase
         .from('special_quests')
         .insert(insertPayload)
@@ -115,8 +111,7 @@ export default function AdminQuestsListPage() {
 
       if (error) throw error
 
-      // ค้นหาชื่อชุดโจทย์จาก state ที่เรามีอยู่แล้วมาใส่แสดงผลทันที
-      const selectedSet = problemSets.find((ps) => ps.id === createForm.problem_set_id)
+      const selectedSet = problemSets.find((ps) => ps.id === createForm.target_set_id)
       const newQuestWithSet = {
         ...data,
         problem_sets: selectedSet ? { id: selectedSet.id, title: selectedSet.title } : null,
@@ -127,7 +122,7 @@ export default function AdminQuestsListPage() {
       setCreateForm({
         title: '',
         description: '',
-        problem_set_id: '',
+        target_set_id: '',
         reward_coins: 50,
         reward_xp: 100,
         is_active: true,
@@ -139,7 +134,6 @@ export default function AdminQuestsListPage() {
     }
   }
 
-  // เริ่มโหมดแก้ไขภารกิจ
   const handleStartEdit = (quest: any) => {
     setEditingId(quest.id)
     setEditForm({
@@ -147,16 +141,14 @@ export default function AdminQuestsListPage() {
       description: quest.description || '',
       reward_coins: quest.reward_coins ?? 0,
       reward_xp: quest.reward_xp ?? 0,
-      problem_set_id: quest.problem_set_id || '',
+      target_set_id: quest.target_set_id || '',
     })
   }
 
-  // ยกเลิกการแก้ไข
   const handleCancelEdit = () => {
     setEditingId(null)
   }
 
-  // บันทึกข้อมูลที่แก้ไขลง Supabase
   const handleSaveEdit = async (id: string) => {
     if (!editForm.title.trim()) {
       alert('กรุณากรอกชื่อภารกิจด้วยครับ')
@@ -172,8 +164,8 @@ export default function AdminQuestsListPage() {
         reward_xp: Number(editForm.reward_xp) || 0,
       }
 
-      if (editForm.problem_set_id) {
-        updatePayload.problem_set_id = editForm.problem_set_id
+      if (editForm.target_set_id) {
+        updatePayload.target_set_id = editForm.target_set_id
       }
 
       const { error } = await supabase
@@ -183,7 +175,7 @@ export default function AdminQuestsListPage() {
 
       if (error) throw error
 
-      const selectedSet = problemSets.find((ps) => ps.id === editForm.problem_set_id)
+      const selectedSet = problemSets.find((ps) => ps.id === editForm.target_set_id)
       setQuests(
         quests.map((q) =>
           q.id === id
@@ -203,7 +195,6 @@ export default function AdminQuestsListPage() {
     }
   }
 
-  // ฟังก์ชันสลับสถานะ เปิด/ปิด ภารกิจ
   const handleToggleActive = async (id: string, currentStatus: boolean) => {
     try {
       const { error } = await supabase
@@ -218,7 +209,6 @@ export default function AdminQuestsListPage() {
     }
   }
 
-  // ฟังก์ชันลบภารกิจ
   const handleDeleteQuest = async (id: string) => {
     if (!confirm('คุณต้องการลบภารกิจนี้ใช่หรือไม่?')) return
 
@@ -249,22 +239,18 @@ export default function AdminQuestsListPage() {
             <p className="text-xs text-gray-500 mt-1">สร้างภารกิจใหม่แบบ Manual หรืออัปโหลด JSON พร้อมแก้ไขชื่อและรางวัลได้ทันที</p>
           </div>
           <div className="flex flex-wrap justify-center gap-2">
-            {/* ปุ่มสร้างแบบ Manual */}
             <button
               onClick={() => setIsCreateModalOpen(true)}
               className="px-4 py-2.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white text-xs font-extrabold rounded-xl shadow transition cursor-pointer"
             >
               ✍️ + สร้างภารกิจ (Manual)
             </button>
-
-            {/* ปุ่มอัปโหลด JSON เดิม */}
             <button
               onClick={() => router.push('/admin/quests/upload')}
               className="px-4 py-2.5 bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white text-xs font-extrabold rounded-xl shadow transition cursor-pointer"
             >
               📄 + อัปโหลด JSON
             </button>
-
             <button
               onClick={() => router.push('/dashboard')}
               className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-extrabold rounded-xl transition cursor-pointer"
@@ -301,7 +287,6 @@ export default function AdminQuestsListPage() {
                         key={q.id}
                         className={`transition ${isEditing ? 'bg-indigo-50/70' : 'hover:bg-indigo-50/30'}`}
                       >
-                        {/* คอลัมน์ 1: ชื่อภารกิจ + คำอธิบาย */}
                         <td className="py-4 px-4 align-top">
                           {isEditing ? (
                             <div className="space-y-2 min-w-[200px]">
@@ -328,12 +313,11 @@ export default function AdminQuestsListPage() {
                           )}
                         </td>
 
-                        {/* คอลัมน์ 2: ชุดโจทย์ที่ผูก */}
                         <td className="py-4 px-4 align-top text-indigo-600 font-bold">
                           {isEditing ? (
                             <select
-                              value={editForm.problem_set_id}
-                              onChange={(e) => setEditForm({ ...editForm, problem_set_id: e.target.value })}
+                              value={editForm.target_set_id}
+                              onChange={(e) => setEditForm({ ...editForm, target_set_id: e.target.value })}
                               className="w-full max-w-[180px] px-2.5 py-1.5 bg-white border border-indigo-300 rounded-xl text-xs font-bold text-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500"
                             >
                               <option value="">-- เลือกชุดโจทย์ --</option>
@@ -348,7 +332,6 @@ export default function AdminQuestsListPage() {
                           )}
                         </td>
 
-                        {/* คอลัมน์ 3: รางวัล (Coins & XP) */}
                         <td className="py-4 px-4 align-top">
                           {isEditing ? (
                             <div className="flex flex-col gap-1.5 min-w-[120px]">
@@ -387,7 +370,6 @@ export default function AdminQuestsListPage() {
                           )}
                         </td>
 
-                        {/* คอลัมน์ 4: สถานะเปิด/ปิด */}
                         <td className="py-4 px-4 align-top text-center">
                           <button
                             onClick={() => handleToggleActive(q.id, q.is_active)}
@@ -402,7 +384,6 @@ export default function AdminQuestsListPage() {
                           </button>
                         </td>
 
-                        {/* คอลัมน์ 5: ปุ่มจัดการ */}
                         <td className="py-4 px-4 align-top text-right">
                           {isEditing ? (
                             <div className="flex items-center justify-end gap-1.5">
@@ -448,24 +429,20 @@ export default function AdminQuestsListPage() {
         </div>
       </div>
 
-      {/* ========================================================
-          Modal: สร้างภารกิจใหม่แบบ Manual
-         ======================================================== */}
+      {/* Modal: สร้างภารกิจใหม่แบบ Manual */}
       {isCreateModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-xs p-4">
-          <div className="bg-white rounded-3xl shadow-2xl border border-indigo-100 w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95 duration-150">
-            {/* Modal Header */}
+          <div className="bg-white rounded-3xl shadow-2xl border border-indigo-100 w-full max-w-lg overflow-hidden">
             <div className="bg-gradient-to-r from-indigo-600 to-purple-600 px-6 py-4 flex justify-between items-center text-white">
               <h2 className="text-base font-black">✍️ สร้างภารกิจพิเศษใหม่ (Manual)</h2>
               <button
                 onClick={() => setIsCreateModalOpen(false)}
-                className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/30 flex items-center justify-center text-sm font-bold cursor-pointer"
+                className="w-8 h-8 rounded-full bg-white/25 flex items-center justify-center text-sm font-bold cursor-pointer"
               >
                 ✕
               </button>
             </div>
 
-            {/* Modal Form */}
             <form onSubmit={handleCreateManualQuest} className="p-6 space-y-4 text-xs">
               <div>
                 <label className="block font-extrabold text-gray-700 mb-1">
@@ -485,7 +462,7 @@ export default function AdminQuestsListPage() {
                 <label className="block font-extrabold text-gray-700 mb-1">คำอธิบายภารกิจ</label>
                 <textarea
                   rows={2}
-                  placeholder="รายละเอียดสั้นๆ เพื่อกระตุ้นให้นักเรียนทำภารกิจ..."
+                  placeholder="รายละเอียดสั้นๆ..."
                   value={createForm.description}
                   onChange={(e) => setCreateForm({ ...createForm, description: e.target.value })}
                   className="w-full px-3.5 py-2 rounded-xl border border-gray-200 text-gray-600 focus:outline-none focus:ring-2 focus:ring-indigo-500"
@@ -498,8 +475,8 @@ export default function AdminQuestsListPage() {
                 </label>
                 <select
                   required
-                  value={createForm.problem_set_id}
-                  onChange={(e) => setCreateForm({ ...createForm, problem_set_id: e.target.value })}
+                  value={createForm.target_set_id}
+                  onChange={(e) => setCreateForm({ ...createForm, target_set_id: e.target.value })}
                   className="w-full px-3.5 py-2.5 rounded-xl border border-gray-200 font-bold text-indigo-700 bg-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 >
                   <option value="">-- กรุณาเลือกชุดโจทย์ที่มีในระบบ --</option>
