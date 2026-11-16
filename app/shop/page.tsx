@@ -136,10 +136,16 @@ export default function ShopPage() {
     })
   }, [items, selectedCategory, searchQuery, myInventory])
 
-  // นับจำนวนสินค้าในแต่ละหมวดหมู่
+  // นับจำนวนสินค้าในแต่ละหมวดหมู่ (อัปเดตครบทุกชิ้นส่วน)
   const counts = useMemo(() => {
     return {
       all: items.length,
+      outfit: items.filter((i) => i.item_type === 'outfit').length,
+      pants: items.filter((i) => i.item_type === 'pants').length,
+      shoes: items.filter((i) => i.item_type === 'shoes').length,
+      hat: items.filter((i) => i.item_type === 'hat').length,
+      glasses: items.filter((i) => i.item_type === 'glasses').length,
+      bg: items.filter((i) => i.item_type === 'bg').length,
       avatar: items.filter((i) => i.item_type === 'avatar').length,
       frame: items.filter((i) => i.item_type === 'frame').length,
       title: items.filter((i) => i.item_type === 'title').length,

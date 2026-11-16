@@ -47,6 +47,50 @@ export default function ProfileStudioPage() {
     }
   }
 
+  // ฟังก์ชันสำหรับปรับตำแหน่ง/ขนาดไอเทม (Fine-Tuning)
+  const handleAdjustTransform = async (fieldPrefix: 'hat' | 'glasses', type: 'x' | 'y' | 'scale', delta: number) => {
+    try {
+      const currentVal = student[`${fieldPrefix}_${type}`] ?? (type === 'scale' ? 1 : 0)
+      let newVal = type === 'scale' ? Number((Number(currentVal) + delta).toFixed(2)) : Number(currentVal) + delta
+
+      // จำกัดขอบเขตการย่อ-ขยายไม่ให้เล็กหรือใหญ่เกินไป
+      if (type === 'scale') {
+        newVal = Math.max(0.4, Math.min(2.5, newVal))
+      }
+
+      const updateData = { [`${fieldPrefix}_${type}`]: newVal }
+
+      const { error } = await supabase.from('users').update(updateData).eq('id', student.id)
+      if (error) throw error
+
+      const updatedUser = { ...student, ...updateData }
+      setStudent(updatedUser)
+      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
+    } catch (err: any) {
+      console.error(err)
+    }
+  }
+
+  // ฟังก์ชันรีเซ็ตตำแหน่งและขนาดกลับเป็นค่าเริ่มต้น
+  const handleResetTransform = async (fieldPrefix: 'hat' | 'glasses') => {
+    try {
+      const updateData = {
+        [`${fieldPrefix}_x`]: 0,
+        [`${fieldPrefix}_y`]: 0,
+        [`${fieldPrefix}_scale`]: 1.0,
+      }
+
+      const { error } = await supabase.from('users').update(updateData).eq('id', student.id)
+      if (error) throw error
+
+      const updatedUser = { ...student, ...updateData }
+      setStudent(updatedUser)
+      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
+    } catch (err: any) {
+      console.error(err)
+    }
+  }
+
   // สวมใส่ หรือ ถอดไอเทมออกตามหมวดหมู่ชิ้นส่วน
   const handleToggleEquip = async (slotType: SlotCategory, value: string | null) => {
     try {
@@ -200,6 +244,81 @@ export default function ProfileStudioPage() {
               )
             })}
           </div>
+
+          {/* 🎛️ แผงควบคุมปรับแต่งตำแหน่งและขนาด (แสดงเมื่อเลือกหมวดหมวกหรือแว่นตา และกำลังสวมใส่อยู่) */}
+          {(activeTab === 'hat' || activeTab === 'glasses') && student?.[`equipped_${activeTab}`] && (
+            <div className="bg-purple-50 border border-purple-200 p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
+              <div className="space-y-0.5 text-center md:text-left">
+                <h4 className="text-xs font-black text-purple-900">
+                  🎛️ ปรับแต่งตำแหน่งและขนาด ({activeTab === 'hat' ? 'หมวก/ทรงผม' : 'แว่นตา'})
+                </h4>
+                <p className="text-[10px] text-purple-600">
+                  ขยับซ้าย-ขวา ขึ้น-ลง หรือย่อขยายให้พอดีตัวเป๊ะๆ ได้เลย!
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-bold">
+                {/* ขยับซ้าย-ขวา */}
+                <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
+                  <span className="text-[11px]">↔️ ซ้าย-ขวา:</span>
+                  <button
+                    onClick={() => handleAdjustTransform(activeTab, 'x', -2)}
+                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
+                  >
+                    ◀
+                  </button>
+                  <button
+                    onClick={() => handleAdjustTransform(activeTab, 'x', 2)}
+                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
+                  >
+                    ▶
+                  </button>
+                </div>
+
+                {/* ขยับขึ้น-ลง */}
+                <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
+                  <span className="text-[11px]">↕️ ขึ้น-ลง:</span>
+                  <button
+                    onClick={() => handleAdjustTransform(activeTab, 'y', -2)}
+                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
+                  >
+                    ▲
+                  </button>
+                  <button
+                    onClick={() => handleAdjustTransform(activeTab, 'y', 2)}
+                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
+                  >
+                    ▼
+                  </button>
+                </div>
+
+                {/* ย่อ-ขยาย */}
+                <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
+                  <span className="text-[11px]">🔍 ขนาด:</span>
+                  <button
+                    onClick={() => handleAdjustTransform(activeTab, 'scale', -0.1)}
+                    className="px-2.5 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer font-black"
+                  >
+                    -
+                  </button>
+                  <button
+                    onClick={() => handleAdjustTransform(activeTab, 'scale', 0.1)}
+                    className="px-2.5 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer font-black"
+                  >
+                    +
+                  </button>
+                </div>
+
+                {/* ปุ่มรีเซ็ตค่าเริ่มต้น */}
+                <button
+                  onClick={() => handleResetTransform(activeTab)}
+                  className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-[11px] font-extrabold transition cursor-pointer"
+                >
+                  🔄 รีเซ็ต
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* รายการไอเทมในหมวดหมู่ที่เลือก */}
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
