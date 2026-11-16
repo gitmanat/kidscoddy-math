@@ -9,6 +9,103 @@ interface AvatarDisplayProps {
   showLevel?: boolean
 }
 
+// แทนที่ฟังก์ชัน CompletedAvatarsBadge เดิมใน components/AvatarDisplay.tsx
+export function CompletedAvatarsBadge({ completedUsers }: { completedUsers: any[] }) {
+  if (!completedUsers || completedUsers.length === 0) {
+    return (
+      <div className="my-4 p-3 rounded-2xl bg-gradient-to-r from-amber-50 via-yellow-50 to-orange-50 border border-dashed border-amber-300 flex items-center justify-between gap-2 group-hover:border-amber-400 transition">
+        <div className="flex items-center gap-2.5">
+          <span className="w-8 h-8 rounded-xl bg-amber-400/20 text-amber-600 flex items-center justify-center text-lg animate-bounce">
+            👑
+          </span>
+          <div>
+            <p className="text-xs font-black text-amber-900">ยังไม่มีผู้พิชิตชุดนี้!</p>
+            <p className="text-[10px] font-bold text-amber-600">มาเป็นคนแรกที่คว้าคอยน์ชุดนี้กันเถอะ 🚀</p>
+          </div>
+        </div>
+        <span className="px-2.5 py-1 bg-amber-400 text-amber-950 text-[10px] font-black rounded-lg shadow-xs shrink-0">
+          ชิงอันดับ 1
+        </span>
+      </div>
+    )
+  }
+
+  const maxDisplay = 4
+  const visibleUsers = completedUsers.slice(0, maxDisplay)
+  const remainingCount = completedUsers.length - maxDisplay
+
+  const topUser = visibleUsers[0]
+  const topUserName = topUser?.display_name || 'เพื่อน'
+  const topCoins = topUser?.coinsEarned || 0
+
+  return (
+    <div className="my-4 p-3 rounded-2xl bg-gradient-to-r from-indigo-50/90 via-purple-50/90 to-amber-50/80 border border-indigo-100/80 shadow-xs space-y-2">
+      {/* แถวบน: หัวข้อชวนแข่งขัน + จำนวนผู้พิชิต */}
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-black text-indigo-700 flex items-center gap-1">
+          <span>🔥</span> เพื่อนที่พิชิตภารกิจนี้แล้ว ({completedUsers.length} คน)
+        </span>
+        <span className="px-2 py-0.5 bg-amber-400/25 text-amber-900 border border-amber-300/60 rounded-full text-[10px] font-black flex items-center gap-1">
+          <span>🏆 สูงสุด</span>
+          <span className="text-amber-700">+{topCoins} 🪙</span>
+        </span>
+      </div>
+
+      {/* แถวล่าง: รูปอวตารซ้อนกัน + ชื่อแชมป์ประจำชุด */}
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex -space-x-2.5 shrink-0 py-0.5">
+          {visibleUsers.map((user, idx) => (
+            <div
+              key={user.id || idx}
+              title={`${user.display_name} เก็บได้ +${user.coinsEarned} Coins`}
+              className={`relative w-8 h-8 rounded-full bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-xs font-black text-white overflow-hidden ring-2 ${
+                idx === 0
+                  ? 'ring-amber-400 z-20 scale-105 shadow-md shadow-amber-200'
+                  : user.isPerfect
+                  ? 'ring-yellow-300 z-10'
+                  : 'ring-white'
+              } transition-transform hover:scale-125 hover:z-30 cursor-pointer`}
+            >
+              {/* แสดงรูปอวตารจริงของเด็ก */}
+              <img
+                src={
+                  user?.equipped_outfit ||
+                  user?.avatar_url ||
+                  `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(user?.display_name || 'kid')}`
+                }
+                alt={user.display_name || 'avatar'}
+                className="w-full h-full object-cover"
+              />
+              {/* มงกุฎเล็กๆ บนหัวคนที่ได้คะแนนสูงสุด */}
+              {idx === 0 && (
+                <span className="absolute -top-0.5 right-0 text-[9px] drop-shadow">👑</span>
+              )}
+            </div>
+          ))}
+
+          {remainingCount > 0 && (
+            <div className="w-8 h-8 rounded-full bg-gradient-to-r from-amber-500 to-orange-500 text-white text-[10px] font-black flex items-center justify-center ring-2 ring-white z-10 shadow-xs">
+              +{remainingCount}
+            </div>
+          )}
+        </div>
+
+        {/* ข้อความสรุปชื่อเพื่อน */}
+        <div className="min-w-0 flex-1 text-right">
+          <p className="text-xs font-black text-gray-800 truncate">
+            {completedUsers.length === 1
+              ? `${topUserName} เก็บไป +${topCoins} 🪙`
+              : `${topUserName} และอีก ${completedUsers.length - 1} คน`}
+          </p>
+          <p className="text-[10px] font-bold text-indigo-600">
+            ชี้ที่รูปเพื่อดูคอยน์ของเพื่อน 👆
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export function AvatarDisplay({ user, size = 'md', onClick, showLevel = true }: AvatarDisplayProps) {
   const sizeClasses = {
     sm: 'w-12 h-12 rounded-2xl',

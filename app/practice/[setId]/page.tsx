@@ -497,6 +497,17 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               )}
             </div>
 
+            {/* 🖼️ แสดงรูปภาพประกอบโจทย์ (ถ้ามี) */}
+            {currentProb.image_url && (
+              <div className="my-4 flex justify-center bg-white p-3 rounded-2xl border border-indigo-100 shadow-sm">
+                <img
+                  src={currentProb.image_url}
+                  alt="รูปภาพประกอบโจทย์"
+                  className="max-h-60 object-contain rounded-xl"
+                />
+              </div>
+            )}
+
             {/* แป้นพิมพ์คณิตศาสตร์ลัด */}
             <div className="bg-indigo-50/70 border border-indigo-100 p-3.5 rounded-2xl space-y-2">
               <span className="text-xs font-extrabold text-indigo-900 block mb-1">

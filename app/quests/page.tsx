@@ -4,12 +4,15 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
+import { CompletedAvatarsBadge } from '@/components/AvatarDisplay'
 
 export default function SpecialQuestsPage() {
   const router = useRouter()
   const [student, setStudent] = useState<any>(null)
   const [quests, setQuests] = useState<any[]>([])
   const [completedQuests, setCompletedQuests] = useState<string[]>([])
+  // เก็บรายชื่อเพื่อนที่พิชิตแต่ละภารกิจแล้ว { [questId]: any[] }
+  const [questCompletionsByQuest, setQuestCompletionsByQuest] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
@@ -25,20 +28,86 @@ export default function SpecialQuestsPage() {
 
   const fetchQuestsData = async (userId: string) => {
     try {
+      // 1. ดึงรายการภารกิจพิเศษทั้งหมดที่เปิดใช้งานอยู่
       const { data: questData } = await supabase
         .from('special_quests')
         .select('*')
         .eq('is_active', true)
         .order('created_at', { ascending: false })
 
-      setQuests(questData || [])
+      const loadedQuests = questData || []
+      setQuests(loadedQuests)
 
-      const { data: compData } = await supabase
+      // 2. ดึงประวัติการทำภารกิจทั้งหมดของนักเรียนทุกคน พร้อมข้อมูลโปรไฟล์
+      const { data: allQuestComps } = await supabase
         .from('quest_completions')
-        .select('quest_id')
-        .eq('user_id', userId)
+        .select(`
+          quest_id,
+          user_id,
+          completed_at,
+          users (
+            id,
+            display_name,
+            avatar_url,
+            equipped_outfit
+          )
+        `)
+        .order('completed_at', { ascending: true }) // เรียงคนที่พิชิตได้ก่อนขึ้นอันดับ 1
 
-      setCompletedQuests(compData ? compData.map((c) => c.quest_id) : [])
+      // 3. ดึงคะแนนจาก set_completions เพื่อมาคำนวณคอยน์รวม (คอยน์จากข้อสอบ + โบนัสเควส)
+      const { data: setComps } = await supabase
+        .from('set_completions')
+        .select('user_id, set_id, score, total_questions')
+
+      // สร้าง Map คะแนนของแต่ละคนในแต่ละชุด
+      const scoreMap: Record<string, { score: number; total: number }> = {}
+      if (setComps) {
+        setComps.forEach((sc) => {
+          scoreMap[`${sc.user_id}_${sc.set_id}`] = {
+            score: sc.score || 0,
+            total: sc.total_questions || 0,
+          }
+        })
+      }
+
+      // 4. จัดกลุ่มรายชื่อผู้พิชิตตาม quest_id และเช็กว่าตัวเราเองทำภารกิจไหนไปแล้วบ้าง
+      const myDoneIds: string[] = []
+      const groupedByQuest: Record<string, any[]> = {}
+
+      if (allQuestComps) {
+        allQuestComps.forEach((item: any) => {
+          if (item.user_id === userId) {
+            myDoneIds.push(item.quest_id)
+          }
+
+          if (!groupedByQuest[item.quest_id]) {
+            groupedByQuest[item.quest_id] = []
+          }
+
+          const userObj = Array.isArray(item.users) ? item.users[0] : item.users
+          const questObj = loadedQuests.find((q) => q.id === item.quest_id)
+
+          if (userObj && questObj) {
+            const setScoreInfo = scoreMap[`${item.user_id}_${questObj.target_set_id}`] || { score: 0, total: 0 }
+            // คอยน์รวมที่ได้ = คะแนนที่ทำได้ในชุดนั้น + รางวัลคอยน์พิเศษของเควส
+            const totalCoinsEarned = setScoreInfo.score + (questObj.reward_coins || 0)
+
+            groupedByQuest[item.quest_id].push({
+              ...userObj,
+              coinsEarned: totalCoinsEarned,
+              isPerfect: setScoreInfo.total > 0 && setScoreInfo.score === setScoreInfo.total,
+            })
+          }
+        })
+
+        // เรียงลำดับคนในแต่ละเควสให้คนที่ได้คอยน์เยอะสุดอยู่หน้าสุด
+        Object.keys(groupedByQuest).forEach((qId) => {
+          groupedByQuest[qId].sort((a, b) => b.coinsEarned - a.coinsEarned)
+        })
+      }
+
+      setCompletedQuests(myDoneIds)
+      setQuestCompletionsByQuest(groupedByQuest)
     } catch (err) {
       console.error('Error fetching quests:', err)
     } finally {
@@ -92,22 +161,25 @@ export default function SpecialQuestsPage() {
             <p className="text-sm font-bold text-gray-600">ยังไม่มีภารกิจพิเศษในขณะนี้ รอติดตามประกาศจากคุณครูได้เลย!</p>
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {quests.map((quest) => {
               const isDone = completedQuests.includes(quest.id)
+              const finishers = questCompletionsByQuest[quest.id] || []
 
               return (
                 <div
                   key={quest.id}
-                  className="bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-sm border border-indigo-100 flex flex-col justify-between gap-4 hover:shadow-md transition"
+                  className={`bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-sm border flex flex-col justify-between transition group ${
+                    isDone ? 'border-emerald-200 bg-emerald-50/15' : 'border-indigo-100 hover:shadow-md'
+                  }`}
                 >
                   <div className="space-y-2">
                     <div className="flex justify-between items-start">
                       <span className="px-3 py-1 bg-rose-50 text-rose-700 text-[10px] font-extrabold rounded-full">
                         ⭐ ภารกิจพิเศษ
                       </span>
-                      <div className="flex items-center gap-3">
-                        <div className="flex items-center gap-1 text-xs font-bold text-yellow-600 bg-yellow-50 px-2.5 py-1 rounded-xl border border-yellow-200">
+                      <div className="flex items-center gap-2">
+                        <div className="flex items-center gap-1 text-xs font-bold text-yellow-700 bg-yellow-50 px-2.5 py-1 rounded-xl border border-yellow-200">
                           <CoinIcon className="w-4 h-4" />
                           <span>+{quest.reward_coins}</span>
                         </div>
@@ -117,13 +189,16 @@ export default function SpecialQuestsPage() {
                       </div>
                     </div>
 
-                    <h3 className="text-base font-black text-gray-800">{quest.title}</h3>
+                    <h3 className="text-base font-black text-gray-800 pt-1">{quest.title}</h3>
                     <p className="text-xs text-gray-500 leading-relaxed">{quest.description || 'ทำภารกิจชุดนี้ให้สำเร็จเพื่อรับรางวัลพิเศษ'}</p>
                   </div>
 
+                  {/* 🏆 แสดงรายชื่อและอวตารของเพื่อนที่พิชิตภารกิจพิเศษนี้แล้ว */}
+                  <CompletedAvatarsBadge completedUsers={finishers} />
+
                   <div>
                     {isDone ? (
-                      <div className="w-full py-3 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-2xl text-center">
+                      <div className="w-full py-3 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-2xl text-center border border-emerald-200">
                         ✓ พิชิตภารกิจสำเร็จแล้ว
                       </div>
                     ) : (
