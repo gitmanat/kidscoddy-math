@@ -211,14 +211,23 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
       requestAnimationFrame(() => inputRef.current?.focus())
     }
 
-    // บันทึกลง Supabase submissions
+    // บันทึกลง Supabase submissions (นับจำนวนครั้งที่ลองตอบสะสม)
     if (student) {
+      const { data: existingSub } = await supabase
+        .from('submissions')
+        .select('attempts')
+        .eq('user_id', student.id)
+        .eq('problem_id', currentProb.id)
+        .maybeSingle()
+
+      const nextAttempts = (existingSub?.attempts || 0) + 1
+
       await supabase.from('submissions').upsert({
         user_id: student.id,
         problem_id: currentProb.id,
         student_answer: studentAns,
         is_correct: isCorrect,
-        attempts: 1,
+        attempts: nextAttempts,
       }, { onConflict: 'user_id,problem_id' })
 
       // ถ้าตอบถูกครั้งแรก และยังไม่เคยถูกข้อนี้มาก่อน -> บวก +1 XP, +1 Coin และอัปเดต Streak ทันที!
