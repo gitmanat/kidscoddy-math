@@ -5,6 +5,7 @@ import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
+import AssignDateField from '@/components/AssignDateField'
 
 // ฟังก์ชันช่วยแปลงเลเวลเป็นฉายาเท่ๆ
 const getLevelTitle = (level: number) => {
@@ -303,6 +304,17 @@ export default function StudentDashboard() {
     () => new Set(backlogSets.map((set) => getSetDate(set))).size,
     [backlogSets]
   )
+
+  // 👩‍🏫 แอดมินเปลี่ยน "วันของการบ้าน" ได้จากการ์ดโดยตรง (บันทึกลง problem_sets.target_date)
+  const isAdmin = student?.role === 'admin'
+  const handleChangeSetDate = async (setId: string, newDate: string) => {
+    const { error } = await supabase.from('problem_sets').update({ target_date: newDate }).eq('id', setId)
+    if (error) {
+      alert(`เปลี่ยนวันไม่สำเร็จ: ${error.message}\n(ถ้ายังไม่ได้เพิ่มคอลัมน์ target_date ให้รันไฟล์ add_target_date.sql ก่อน)`)
+      return
+    }
+    setProblemSets((prev) => prev.map((s) => (s.id === setId ? { ...s, target_date: newDate } : s)))
+  }
 
   const goToDate = (d: string) => {
     setSelectedDate(d)
@@ -922,9 +934,21 @@ export default function StudentDashboard() {
                       <h3 className="text-xl font-black text-gray-800 mb-2 group-hover:text-indigo-600 transition">
                         {set.title}
                       </h3>
-                      <p className="text-sm text-gray-500 mb-6 line-clamp-2">
+                      <p className="text-sm text-gray-500 mb-4 line-clamp-2">
                         {set.description || 'ไม่มีคำอธิบายสำหรับชุดโจทย์นี้'}
                       </p>
+
+                      {/* 👩‍🏫 เฉพาะแอดมิน: ย้าย/เปลี่ยนวันของการบ้านชุดนี้ */}
+                      {isAdmin && (
+                        <div className="mb-4 pt-3 border-t border-dashed border-gray-200">
+                          <AssignDateField
+                            compact
+                            label="📅 วันของการบ้าน"
+                            value={getSetDate(set)}
+                            onChange={(v) => handleChangeSetDate(set.id, v)}
+                          />
+                        </div>
+                      )}
                     </div>
 
                     {/* 🪙 แทรก Badge แสดงรูปเพื่อนที่ทำแล้วตรงนี้ */}

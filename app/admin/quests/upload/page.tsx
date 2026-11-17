@@ -1,14 +1,87 @@
 'use client'
 
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
+import AssignDateField, { toLocalDateStr, useTodayStr } from '@/components/AssignDateField'
+
+// ---------- ตัวช่วยเรื่องวันที่ (เวลาท้องถิ่น) ----------
+const addDays = (s: string, n: number) => {
+  const [y, m, d] = s.split('-').map(Number)
+  const dt = new Date(y, m - 1, d)
+  dt.setDate(dt.getDate() + n)
+  return toLocalDateStr(dt)
+}
+
+// รับ 'YYYY-MM-DD' หรือ ISO string → คืน 'YYYY-MM-DD' (ถ้าอ่านไม่ได้คืน '')
+const normalizeDay = (v: unknown): string => {
+  if (!v) return ''
+  const str = String(v).trim()
+  if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return str
+  const dt = new Date(str)
+  return isNaN(dt.getTime()) ? '' : toLocalDateStr(dt)
+}
+
+const dayStartIso = (day: string) => {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d, 0, 0, 0).toISOString()
+}
+const dayEndIso = (day: string) => {
+  const [y, m, d] = day.split('-').map(Number)
+  return new Date(y, m - 1, d, 23, 59, 59).toISOString()
+}
 
 export default function UploadQuestsAdminPage() {
   const router = useRouter()
   const [jsonInput, setJsonInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [message, setMessage] = useState('')
+
+  // 📅 ตั้งวันเริ่มให้ภารกิจที่ใน JSON ไม่ได้ระบุ start_date
+  const [defaultDate, setDefaultDate] = useState('') // ตั้งเป็นวันนี้ใน useEffect (ห้ามเรียก new Date() ตอน render)
+  const today = useTodayStr()
+  useEffect(() => {
+    if (today && !defaultDate) setDefaultDate(today)
+  }, [today, defaultDate])
+  const [spreadDaily, setSpreadDaily] = useState(false) // กระจายวันละ 1 ภารกิจ ต่อเนื่องจากวันที่เริ่ม
+
+  // แปลง JSON เป็นรายการภารกิจ + วันที่ที่จะบันทึก (ใช้ทั้งพรีวิวและตอนบันทึก)
+  const parsed = useMemo(() => {
+    if (!jsonInput.trim() || !defaultDate) return { rows: [] as any[], error: '' }
+    try {
+      let arr = JSON.parse(jsonInput)
+      // ถ้าเป็น Object เดี่ยว (ลืมใส่ [...]) ให้แปลงเป็น Array อัตโนมัติ
+      if (!Array.isArray(arr)) {
+        if (typeof arr === 'object' && arr !== null) arr = [arr]
+        else return { rows: [], error: 'ข้อมูล JSON ต้องอยู่ในรูป Array [...] หรือ Object ที่ถูกต้อง' }
+      }
+
+      let undated = 0
+      const rows = arr.map((q: any) => {
+        let day = normalizeDay(q.start_date)
+        if (!day) {
+          day = spreadDaily ? addDays(defaultDate, undated) : defaultDate
+          undated += 1
+        }
+        const endDay = normalizeDay(q.end_date)
+        return {
+          title: q.title,
+          description: q.description || '',
+          reward_coins: q.reward_coins || 10,
+          reward_xp: q.reward_xp || 15,
+          target_set_id: q.target_set_id,
+          is_active: q.is_active ?? true,
+          start_date: dayStartIso(day),
+          end_date: endDay ? dayEndIso(endDay) : null,
+          _day: day,
+          _endDay: endDay,
+        }
+      })
+      return { rows, error: '' }
+    } catch {
+      return { rows: [], error: 'รูปแบบ JSON ไม่ถูกต้อง' }
+    }
+  }, [jsonInput, defaultDate, spreadDaily])
 
   // ฟังก์ชันอ่านไฟล์ JSON ที่อัปโหลด
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -20,9 +93,9 @@ export default function UploadQuestsAdminPage() {
       try {
         const content = event.target?.result as string
         // จัดรูปแบบให้อ่านง่ายใน Textarea
-        const parsed = JSON.parse(content)
-        setJsonInput(JSON.stringify(parsed, null, 2))
-        setMessage('📁 โหลดไฟล์ JSON สำเร็จ! ตรวจสอบความถูกต้องด้านล่างแล้วกดบันทึกได้เลย')
+        const parsedJson = JSON.parse(content)
+        setJsonInput(JSON.stringify(parsedJson, null, 2))
+        setMessage('📁 โหลดไฟล์ JSON สำเร็จ! ตรวจสอบวันที่ในตัวอย่างด้านล่างแล้วกดบันทึกได้เลย')
       } catch (err) {
         setMessage('❌ รูปแบบไฟล์ JSON ไม่ถูกต้อง กรุณาตรวจสอบโครงสร้างไฟล์')
       }
@@ -36,37 +109,28 @@ export default function UploadQuestsAdminPage() {
       setMessage('⚠️ กรุณาอัปโหลดไฟล์หรือพิมพ์ข้อมูล JSON ก่อนบันทึก')
       return
     }
+    if (parsed.error) {
+      setMessage(`❌ ${parsed.error}`)
+      return
+    }
+
+    // ตรวจข้อมูลจำเป็นก่อนส่ง จะได้บอกได้ว่าผิดที่ข้อไหน
+    const bad = parsed.rows.findIndex((r: any) => !r.title || !r.target_set_id)
+    if (bad >= 0) {
+      setMessage(`❌ ภารกิจลำดับที่ ${bad + 1} ไม่มี title หรือ target_set_id`)
+      return
+    }
 
     setLoading(true)
     setMessage('⏳ กำลังนำเข้าข้อมูลภารกิจพิเศษ...')
 
     try {
-      let questsArray = JSON.parse(jsonInput)
+      // insert ทีเดียวทั้งชุด: ถ้ามีข้อใดผิดพลาดจะไม่บันทึกเลย ไม่เกิดข้อมูลค้างครึ่งๆ กลางๆ
+      const payload = parsed.rows.map(({ _day, _endDay, ...row }: any) => row)
+      const { error } = await supabase.from('special_quests').insert(payload)
+      if (error) throw error
 
-      // 🛠️ ป้องกัน Error: ถ้าข้อมูลที่ส่งมาเป็น Object เดี่ยว (ลืมใส่ [...]) ให้แปลงเป็น Array อัตโนมัติ
-      if (!Array.isArray(questsArray)) {
-        if (typeof questsArray === 'object' && questsArray !== null) {
-          questsArray = [questsArray]
-        } else {
-          throw new Error('ข้อมูล JSON ต้องอยู่ในรูป Array [...] หรือ Object ที่ถูกต้อง')
-        }
-      }
-
-      // วนลูป insert ข้อมูลลงตาราง special_quests[cite: 4]
-      for (const q of questsArray) {
-        const { error } = await supabase.from('special_quests').insert({
-          title: q.title,
-          description: q.description || '',
-          reward_coins: q.reward_coins || 10,
-          reward_xp: q.reward_xp || 15,
-          target_set_id: q.target_set_id,
-          is_active: q.is_active ?? true,
-        })
-
-        if (error) throw error
-      }
-
-      setMessage('🎉 นำเข้าภารกิจพิเศษทั้งหมดสำเร็จเรียบร้อยแล้ว!')
+      setMessage(`🎉 นำเข้าภารกิจพิเศษสำเร็จ ${payload.length} ภารกิจ!`)
       setJsonInput('')
     } catch (err: any) {
       console.error('Error importing quests:', err)
@@ -75,6 +139,16 @@ export default function UploadQuestsAdminPage() {
       setLoading(false)
     }
   }
+
+  const undatedCount = (() => {
+    try {
+      const arr = JSON.parse(jsonInput)
+      const list = Array.isArray(arr) ? arr : [arr]
+      return list.filter((q: any) => q && !normalizeDay(q.start_date)).length
+    } catch {
+      return 0
+    }
+  })()
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 p-6 md:p-12">
@@ -111,10 +185,52 @@ export default function UploadQuestsAdminPage() {
               rows={10}
               value={jsonInput}
               onChange={(e) => setJsonInput(e.target.value)}
-              placeholder="[ { title: '...', reward_coins: 20, target_set_id: '...' } ]"
+              placeholder={`[\n  {\n    "title": "ภารกิจพิชิตเศษส่วน",\n    "description": "...",\n    "reward_coins": 20,\n    "reward_xp": 20,\n    "target_set_id": "<uuid ของชุดโจทย์>",\n    "start_date": "2026-11-18",   // ไม่บังคับ (ไม่ใส่ = ใช้วันที่จากข้อ 3)\n    "end_date": "2026-11-25"      // ไม่บังคับ (ไม่ใส่ = ไม่หมดเขต)\n  }\n]`}
               className="w-full p-4 rounded-2xl border border-gray-200 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs text-gray-800 bg-gray-50"
             />
           </div>
+
+          {/* 📅 ตั้งวันเปิดภารกิจ */}
+          <div className="space-y-3 p-4 bg-rose-50/60 border border-rose-100 rounded-2xl">
+            <label className="block text-xs font-extrabold text-gray-700">3. วันเปิดภารกิจ (สำหรับรายการที่ใน JSON ไม่มี start_date):</label>
+            <AssignDateField value={defaultDate} onChange={setDefaultDate} label="📅 วันเริ่มต้น" />
+            <label className="flex items-center gap-2 text-xs font-bold text-gray-700 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={spreadDaily}
+                onChange={(e) => setSpreadDaily(e.target.checked)}
+                className="w-4 h-4 accent-rose-600 cursor-pointer"
+              />
+              กระจายวันละ 1 ภารกิจ ต่อเนื่องจากวันเริ่มต้น (เหมาะกับการอัปโหลดภารกิจรายวันทีละหลายสิบวัน)
+            </label>
+          </div>
+
+          {/* ตัวอย่างวันที่ที่จะบันทึก */}
+          {parsed.error && jsonInput.trim() && (
+            <div className="p-3 bg-rose-50 border border-rose-200 rounded-2xl text-rose-700 text-xs font-bold">
+              ⚠️ {parsed.error}
+            </div>
+          )}
+          {parsed.rows.length > 0 && (
+            <div className="p-4 bg-gray-50 border border-gray-200 rounded-2xl space-y-2">
+              <p className="text-xs font-extrabold text-gray-700">
+                👁️ ตัวอย่างที่จะบันทึก {parsed.rows.length} ภารกิจ
+                {undatedCount > 0 && ` (ใช้วันจากข้อ 3 จำนวน ${undatedCount} ภารกิจ)`}
+              </p>
+              <ul className="space-y-1 text-xs text-gray-600">
+                {parsed.rows.slice(0, 8).map((r: any, i: number) => (
+                  <li key={i} className="flex gap-2">
+                    <span className="font-mono font-bold text-rose-600 shrink-0">{r._day}</span>
+                    <span className="truncate">{r.title || '(ไม่มี title)'}</span>
+                    {r._endDay && <span className="text-orange-600 shrink-0">⏰ ถึง {r._endDay}</span>}
+                  </li>
+                ))}
+              </ul>
+              {parsed.rows.length > 8 && (
+                <p className="text-[11px] text-gray-400 font-bold">…และอีก {parsed.rows.length - 8} ภารกิจ</p>
+              )}
+            </div>
+          )}
 
           {message && (
             <div className="p-4 bg-purple-50 border border-purple-200 rounded-2xl text-purple-900 text-xs font-bold animate-fadeIn">

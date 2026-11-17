@@ -5,6 +5,102 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import 'katex/dist/katex.min.css'
 import { InlineMath } from 'react-katex'
+import AssignDateField, { toLocalDateStr } from '@/components/AssignDateField'
+
+// วันของชุดโจทย์ = target_date (ถ้าไม่มีใช้วันที่สร้างตามเวลาเครื่อง)
+const getSetDay = (set: any): string => {
+  if (set?.target_date) return String(set.target_date).slice(0, 10)
+  if (set?.created_at) return toLocalDateStr(new Date(set.created_at))
+  return ''
+}
+
+// =====================================================================
+// 📥 นำเข้าข้อสอบจาก JSON
+// รูปแบบ: [ { "question_text": "...", "correct_answer": "...", "solution_text": "..." } ]
+// - ไม่บังคับ: image_url, order_num (ถ้าไม่ใส่ จะเรียงต่อท้ายข้อที่มีอยู่ในชุดอัตโนมัติ)
+// - รองรับชื่อสั้น: question / answer / solution และรูปแบบ { "problems": [...] } หรือ Object เดี่ยว
+// =====================================================================
+type ImportRow = {
+  order_num: number
+  question_text: string
+  correct_answer: string
+  solution_text: string
+  image_url: string | null
+}
+
+const SAMPLE_JSON = JSON.stringify(
+  [
+    {
+      question_text: 'จงหาค่าของ $(-8) + 13$',
+      correct_answer: '5',
+      solution_text: '1. ลบค่าสัมบูรณ์กัน $13 - 8 = 5$\n2. ตอบตามเครื่องหมายของตัวที่มากกว่า ได้ $5$',
+    },
+    {
+      question_text: 'จงหาค่าของ $(-6) \\times (-7)$',
+      correct_answer: '42',
+      solution_text: 'เครื่องหมายเหมือนกัน ผลคูณเป็นบวก $6 \\times 7 = 42$',
+    },
+  ],
+  null,
+  2
+)
+
+// อักขระแท็บ/backspace/formfeed/CR ที่โผล่มาเพราะเขียน \times \frac \beta \right ใน JSON แบบ backslash เดียว
+const CONTROL_CHARS = /[\u0008\u0009\u000C\u000D]/
+
+function parseProblemsJson(input: string, startOrder: number) {
+  const result = { rows: [] as ImportRow[], errors: [] as string[], warnings: [] as string[], fatal: '' }
+  if (!input.trim()) return result
+
+  let data: any
+  try {
+    data = JSON.parse(input)
+  } catch (e: any) {
+    result.fatal = `รูปแบบ JSON ไม่ถูกต้อง: ${e.message}`
+    return result
+  }
+
+  if (data && !Array.isArray(data) && Array.isArray(data.problems)) data = data.problems
+  if (!Array.isArray(data)) {
+    if (typeof data === 'object' && data !== null) data = [data]
+    else {
+      result.fatal = 'ข้อมูล JSON ต้องอยู่ในรูป Array [...] หรือ Object ที่ถูกต้อง'
+      return result
+    }
+  }
+
+  let nextOrder = startOrder
+  data.forEach((item: any, i: number) => {
+    const no = i + 1
+    const question = String(item?.question_text ?? item?.question ?? '').trim()
+    const answer = String(item?.correct_answer ?? item?.answer ?? '').trim()
+    const solution = String(item?.solution_text ?? item?.solution ?? '').trim()
+    const image = String(item?.image_url ?? '').trim()
+
+    if (!question) result.errors.push(`ข้อที่ ${no}: ไม่มี question_text`)
+    if (!answer) result.errors.push(`ข้อที่ ${no}: ไม่มี correct_answer`)
+    if (CONTROL_CHARS.test(question + answer + solution)) {
+      result.warnings.push(
+        `ข้อที่ ${no}: พบอักขระแท็บ/ขึ้นบรรทัดแปลกๆ น่าจะมาจาก \\times \\frac ที่เขียน backslash ตัวเดียว (ใน JSON ต้องเขียนเป็น \\\\times)`
+      )
+    }
+
+    result.rows.push({
+      order_num: typeof item?.order_num === 'number' ? item.order_num : nextOrder++,
+      question_text: question,
+      correct_answer: answer,
+      solution_text: solution,
+      image_url: image || null,
+    })
+  })
+
+  return result
+}
+
+// แก้ backslash ที่ไม่ใช่ escape ของ JSON (เช่น \times \frac \div) ให้เป็น \\times \\frac \\div
+// (คง \\ \" \/ \n \uXXXX ไว้ตามเดิม)
+const fixLatexBackslashes = (input: string) =>
+  input.replace(/\\(\\|"|\/|n|u[0-9a-fA-F]{4})|\\/g, (m, valid) => (valid ? m : '\\\\'))
 
 // ฟังก์ชันช่วยเรนเดอร์ข้อความผสม LaTeX และขึ้นบรรทัดใหม่ให้แม่นยำ 100% (ล้างอักขระขยะอัตโนมัติ)
 function RenderMathText({ text }: { text: string }) {
@@ -55,6 +151,17 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
   const [isAdding, setIsAdding] = useState(false)
   const [errorMsg, setErrorMsg] = useState('')
 
+  // 📥 State สำหรับนำเข้าข้อสอบจาก JSON
+  const [isImportOpen, setIsImportOpen] = useState(false)
+  const [jsonInput, setJsonInput] = useState('')
+  const [importMsg, setImportMsg] = useState('')
+  const [importing, setImporting] = useState(false)
+
+  // 📅 State สำหรับ "วันของการบ้าน" ของชุดนี้
+  const [setDate, setSetDate] = useState('')
+  const [savingDate, setSavingDate] = useState(false)
+  const [dateMsg, setDateMsg] = useState('')
+
   // State สำหรับฟอร์มแก้ไขโจทย์เดิม
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editOrderNum, setEditOrderNum] = useState(1)
@@ -78,6 +185,30 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
     setAdminUser(user)
     fetchSetAndProblems()
   }, [setId, router])
+
+  // ตั้งค่าช่องวันที่ครั้งแรกที่โหลดชุดโจทย์ (ผูกกับ id จึงไม่ถูกรีเซ็ตตอนเพิ่ม/แก้โจทย์แล้วโหลดซ้ำ)
+  useEffect(() => {
+    if (problemSet) setSetDate(getSetDay(problemSet))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [problemSet?.id])
+
+  const savedDate = getSetDay(problemSet)
+  const dateDirty = !!setDate && setDate !== savedDate
+
+  // บันทึกวันของการบ้านลง problem_sets.target_date
+  const handleSaveSetDate = async () => {
+    if (!setDate) return
+    setSavingDate(true)
+    setDateMsg('')
+    const { error } = await supabase.from('problem_sets').update({ target_date: setDate }).eq('id', setId)
+    if (error) {
+      setDateMsg(`❌ บันทึกวันไม่สำเร็จ: ${error.message} (ถ้ายังไม่มีคอลัมน์ target_date ให้รัน add_target_date.sql ก่อน)`)
+    } else {
+      setProblemSet((prev: any) => ({ ...prev, target_date: setDate }))
+      setDateMsg('✅ บันทึกวันของการบ้านเรียบร้อยแล้ว')
+    }
+    setSavingDate(false)
+  }
 
   const fetchSetAndProblems = async () => {
     try {
@@ -136,6 +267,70 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
       alert('อัปโหลดรูปภาพไม่สำเร็จ: ' + err.message)
     } finally {
       setUploadingImg(false)
+    }
+  }
+
+  // ลำดับข้อเริ่มต้นของการนำเข้า = ต่อท้ายข้อสุดท้ายที่มีอยู่
+  const getImportStartOrder = () => Math.max(0, ...problems.map((p) => Number(p.order_num) || 0)) + 1
+
+  // อ่านไฟล์ .json ที่อัปโหลด
+  const handleJsonFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      setJsonInput((event.target?.result as string) || '')
+      setImportMsg('📁 โหลดไฟล์สำเร็จ! ตรวจสอบตัวอย่างด้านล่างแล้วกดนำเข้าได้เลย')
+    }
+    reader.readAsText(file)
+    e.target.value = '' // เลือกไฟล์เดิมซ้ำได้
+  }
+
+  // นำเข้าข้อสอบทั้งชุดในครั้งเดียว (ถ้ามีข้อใดผิดพลาดจะไม่บันทึกเลย)
+  const handleImportProblems = async () => {
+    setImportMsg('')
+    if (!jsonInput.trim()) {
+      setImportMsg('⚠️ กรุณาอัปโหลดไฟล์หรือวาง JSON ก่อนนำเข้า')
+      return
+    }
+    const parsed = parseProblemsJson(jsonInput, getImportStartOrder())
+    if (parsed.fatal) {
+      setImportMsg(`❌ ${parsed.fatal}`)
+      return
+    }
+    if (parsed.errors.length > 0) {
+      setImportMsg(`❌ ${parsed.errors[0]} (พบปัญหาทั้งหมด ${parsed.errors.length} จุด)`)
+      return
+    }
+    if (parsed.rows.length === 0) {
+      setImportMsg('⚠️ ไม่พบข้อสอบใน JSON')
+      return
+    }
+    if (parsed.warnings.length > 0 && !confirm(`พบคำเตือน ${parsed.warnings.length} จุด (สมการ LaTeX อาจแสดงผลผิด) ต้องการนำเข้าต่อหรือไม่?`)) {
+      return
+    }
+
+    setImporting(true)
+    try {
+      const payload = parsed.rows.map((r) => ({
+        set_id: setId,
+        order_num: r.order_num,
+        question_text: r.question_text,
+        image_url: r.image_url,
+        answer_type: 'text',
+        correct_answer: r.correct_answer,
+        solution_text: r.solution_text,
+      }))
+      const { error } = await supabase.from('problems').insert(payload)
+      if (error) throw error
+
+      setJsonInput('')
+      setImportMsg(`🎉 นำเข้าข้อสอบสำเร็จ ${payload.length} ข้อ!`)
+      fetchSetAndProblems()
+    } catch (err: any) {
+      setImportMsg(`❌ นำเข้าไม่สำเร็จ: ${err.message}`)
+    } finally {
+      setImporting(false)
     }
   }
 
@@ -234,6 +429,12 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
     return <div className="min-h-screen flex items-center justify-center text-gray-500 font-bold">กำลังโหลดข้อมูลข้อสอบ...</div>
   }
 
+  // 👁️ ตัวอย่างข้อสอบที่จะนำเข้า (คำนวณเฉพาะตอนเปิดแผงนำเข้า)
+  const importPreview = isImportOpen
+    ? parseProblemsJson(jsonInput, getImportStartOrder())
+    : { rows: [] as ImportRow[], errors: [] as string[], warnings: [] as string[], fatal: '' }
+  const needsBackslashFix = importPreview.warnings.length > 0 || importPreview.fatal.includes('JSON')
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
       {/* Header */}
@@ -254,21 +455,214 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
 
       {/* Main */}
       <main className="max-w-4xl mx-auto px-6 mt-8">
+        {/* 📅 วันของการบ้านชุดนี้ — นักเรียนจะเห็นชุดนี้ตามวันที่กำหนด */}
+        <div className="bg-white/95 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-purple-100 mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
+          <AssignDateField value={setDate} onChange={(v) => { setSetDate(v); setDateMsg('') }} label="📅 วันของการบ้านชุดนี้" />
+          <div className="flex flex-col items-start md:items-end gap-2">
+            <button
+              type="button"
+              onClick={handleSaveSetDate}
+              disabled={!dateDirty || savingDate}
+              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer"
+            >
+              {savingDate ? 'กำลังบันทึก...' : dateDirty ? '💾 บันทึกวันที่' : '✓ บันทึกแล้ว'}
+            </button>
+            {dateMsg && <span className="text-xs font-bold text-gray-600">{dateMsg}</span>}
+          </div>
+        </div>
+
         <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4 mb-6">
           <div>
             <h2 className="text-2xl font-black text-gray-800">รายการข้อสอบในชุดนี้ (แบบเติมคำตอบ)</h2>
             <p className="text-sm text-gray-500">จัดการข้อสอบ อัปโหลดรูปภาพประกอบ และเฉลยแบบเติมคำ (รองรับ LaTeX)</p>
           </div>
-          <button
-            onClick={() => {
-              setIsAdding(!isAdding)
-              setEditingId(null)
-            }}
-            className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer"
-          >
-            {isAdding ? '✕ ปิดฟอร์ม' : '+ เพิ่มข้อสอบใหม่'}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              onClick={() => {
+                setIsImportOpen(!isImportOpen)
+                setIsAdding(false)
+                setEditingId(null)
+                setImportMsg('')
+              }}
+              className={`px-5 py-2.5 font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer ${
+                isImportOpen
+                  ? 'bg-gray-200 hover:bg-gray-300 text-gray-700'
+                  : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+              }`}
+            >
+              {isImportOpen ? '✕ ปิดแผงนำเข้า' : '📥 นำเข้าจาก JSON'}
+            </button>
+            <button
+              onClick={() => {
+                setIsAdding(!isAdding)
+                setIsImportOpen(false)
+                setEditingId(null)
+              }}
+              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 text-white font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer"
+            >
+              {isAdding ? '✕ ปิดฟอร์ม' : '+ เพิ่มข้อสอบใหม่'}
+            </button>
+          </div>
         </div>
+
+        {/* 📥 แผงนำเข้าข้อสอบจาก JSON (ไม่ต้องแนบรูปภาพ เพิ่มทีละหลายข้อได้ในครั้งเดียว) */}
+        {isImportOpen && (
+          <div className="bg-white/95 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-xl border border-emerald-200 mb-8 space-y-4">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <h3 className="text-lg font-bold text-gray-800">📥 นำเข้าข้อสอบจาก JSON</h3>
+              <span className="text-xs font-bold px-3 py-1 bg-emerald-50 text-emerald-700 rounded-full border border-emerald-200">
+                จะเริ่มต่อที่ข้อที่ {getImportStartOrder()}
+              </span>
+            </div>
+
+            <details className="text-xs bg-gray-50 border border-gray-200 rounded-2xl p-3">
+              <summary className="font-extrabold text-gray-700 cursor-pointer">📖 รูปแบบ JSON ที่ใช้ได้</summary>
+              <div className="mt-2 space-y-2 text-gray-600 leading-relaxed">
+                <p>
+                  ฟิลด์ที่ต้องมี: <code className="font-mono text-emerald-700">question_text</code>,{' '}
+                  <code className="font-mono text-emerald-700">correct_answer</code> — ไม่บังคับ:{' '}
+                  <code className="font-mono">solution_text</code>, <code className="font-mono">image_url</code>,{' '}
+                  <code className="font-mono">order_num</code> (ถ้าไม่ใส่ จะเรียงต่อท้ายข้อเดิมให้อัตโนมัติ)
+                </p>
+                <p>
+                  สมการ LaTeX ต้องใช้ backslash <b>สองตัว</b> ใน JSON เช่น <code className="font-mono">\\times</code>,{' '}
+                  <code className="font-mono">\\frac</code> และขึ้นบรรทัดใหม่ใช้ <code className="font-mono">\n</code>
+                  (ถ้าเผลอพิมพ์ตัวเดียว กดปุ่ม "แก้ \ ให้อัตโนมัติ" ได้)
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setJsonInput(SAMPLE_JSON)
+                    setImportMsg('')
+                  }}
+                  className="px-3 py-1.5 bg-white hover:bg-emerald-50 border border-emerald-200 text-emerald-700 font-bold rounded-lg cursor-pointer"
+                >
+                  ใส่ตัวอย่างลงในช่อง
+                </button>
+              </div>
+            </details>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-extrabold text-gray-700">1. เลือกไฟล์ .json:</label>
+              <input
+                type="file"
+                accept=".json,application/json"
+                onChange={handleJsonFile}
+                className="w-full text-xs text-gray-500 file:mr-4 file:py-2.5 file:px-5 file:rounded-xl file:border-0 file:text-xs file:font-extrabold file:bg-emerald-600 file:text-white hover:file:bg-emerald-700 file:cursor-pointer cursor-pointer border border-gray-200 rounded-2xl p-2"
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="block text-xs font-extrabold text-gray-700">2. หรือวาง / แก้ไข JSON ตรงนี้:</label>
+              <textarea
+                rows={10}
+                value={jsonInput}
+                onChange={(e) => {
+                  setJsonInput(e.target.value)
+                  setImportMsg('')
+                }}
+                placeholder='[ { "question_text": "จงหาค่าของ $(-8) + 13$", "correct_answer": "5", "solution_text": "..." } ]'
+                className="w-full p-4 rounded-2xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none font-mono text-xs text-gray-800 bg-gray-50"
+              />
+              {needsBackslashFix && jsonInput.trim() && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setJsonInput(fixLatexBackslashes(jsonInput))
+                    setImportMsg('🔧 แก้ backslash ให้แล้ว ตรวจตัวอย่างด้านล่างอีกครั้ง')
+                  }}
+                  className="px-3.5 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl cursor-pointer"
+                >
+                  🔧 แก้ \ ให้อัตโนมัติ (เช่น \times → \\times)
+                </button>
+              )}
+            </div>
+
+            {/* ผลตรวจสอบ + ตัวอย่าง */}
+            {importPreview.fatal && jsonInput.trim() && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-bold">
+                ⚠️ {importPreview.fatal}
+              </div>
+            )}
+            {importPreview.errors.length > 0 && (
+              <div className="p-3 bg-rose-50 border border-rose-200 text-rose-700 rounded-2xl text-xs font-bold space-y-1">
+                {importPreview.errors.slice(0, 5).map((er, i) => (
+                  <p key={i}>❌ {er}</p>
+                ))}
+                {importPreview.errors.length > 5 && <p>…และอีก {importPreview.errors.length - 5} จุด</p>}
+              </div>
+            )}
+            {importPreview.warnings.length > 0 && (
+              <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 rounded-2xl text-xs font-bold space-y-1">
+                {importPreview.warnings.slice(0, 3).map((w, i) => (
+                  <p key={i}>⚠️ {w}</p>
+                ))}
+                {importPreview.warnings.length > 3 && <p>…และอีก {importPreview.warnings.length - 3} จุด</p>}
+              </div>
+            )}
+
+            {importPreview.rows.length > 0 && (
+              <div className="p-4 bg-indigo-50/50 border border-indigo-100 rounded-2xl space-y-3">
+                <p className="text-xs font-extrabold text-indigo-800">
+                  👁️ ตัวอย่างข้อสอบที่จะนำเข้า ({importPreview.rows.length} ข้อ)
+                </p>
+                <div className="space-y-3 max-h-80 overflow-y-auto pr-1">
+                  {importPreview.rows.slice(0, 5).map((r, i) => (
+                    <div key={i} className="bg-white p-3 rounded-xl border border-indigo-100 text-sm space-y-1.5">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="px-2.5 py-0.5 bg-purple-100 text-purple-700 text-xs font-bold rounded-full">
+                          ข้อที่ {r.order_num}
+                        </span>
+                        <span className="text-xs text-emerald-700 font-bold bg-emerald-50 border border-emerald-200 px-2 py-0.5 rounded-md">
+                          คำตอบ: {r.correct_answer}
+                        </span>
+                        {r.image_url && <span className="text-[10px] text-sky-600 font-bold">🖼️ มีรูป</span>}
+                      </div>
+                      <div className="text-gray-800 font-semibold">
+                        <RenderMathText text={r.question_text} />
+                      </div>
+                      {r.solution_text && (
+                        <div className="text-xs text-amber-900 bg-amber-50/70 border border-amber-100 p-2 rounded-lg">
+                          <RenderMathText text={r.solution_text} />
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+                {importPreview.rows.length > 5 && (
+                  <p className="text-[11px] text-gray-400 font-bold">…และอีก {importPreview.rows.length - 5} ข้อ (แสดงตัวอย่าง 5 ข้อแรก)</p>
+                )}
+              </div>
+            )}
+
+            {importMsg && (
+              <div className="p-3 bg-purple-50 border border-purple-200 rounded-2xl text-purple-900 text-xs font-bold">
+                {importMsg}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-3 pt-1">
+              <button
+                type="button"
+                onClick={() => {
+                  setJsonInput('')
+                  setImportMsg('')
+                }}
+                className="px-5 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-semibold rounded-xl transition cursor-pointer text-xs"
+              >
+                ล้างช่อง
+              </button>
+              <button
+                type="button"
+                onClick={handleImportProblems}
+                disabled={importing || importPreview.rows.length === 0}
+                className="px-6 py-2.5 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-700 hover:to-teal-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold rounded-xl shadow-md transition cursor-pointer text-xs"
+              >
+                {importing ? 'กำลังนำเข้า...' : `🚀 นำเข้า ${importPreview.rows.length || ''} ข้อ`}
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* ฟอร์มเพิ่มโจทย์ข้อใหม่ */}
         {isAdding && (
