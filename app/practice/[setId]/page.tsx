@@ -1,12 +1,12 @@
 'use client'
 
-import { useEffect, useState, use, Suspense } from 'react'
+import { useEffect, useRef, useState, use, Suspense } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import confetti from 'canvas-confetti'
 import 'katex/dist/katex.min.css'
 import { InlineMath } from 'react-katex'
-import * as math from 'mathjs'
+import { checkAnswer, answerToTex } from '@/lib/answerMath'
 
 function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
   const resolvedParams = use(params)
@@ -22,9 +22,16 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
   const [isSosModalOpen, setIsSosModalOpen] = useState(false)
   const [sosMessage, setSosMessage] = useState('')
 
+  // ⌨️ ช่องคำตอบ / แป้นพิมพ์ / การเลื่อนไปข้อถัดไปอัตโนมัติ
+  const inputRef = useRef<HTMLInputElement>(null)
+  const advanceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [advancing, setAdvancing] = useState(false)
+  // true = ใช้คีย์บอร์ดของเครื่อง / false = ซ่อนคีย์บอร์ดเครื่อง ใช้แป้นพิมพ์คณิตในแอป (ค่าเริ่มต้นของแท็บเล็ต/มือถือ)
+  const [useNativeKeyboard, setUseNativeKeyboard] = useState(true)
+
   // เก็บคำตอบและสถานะการตรวจของแต่ละข้อ { [problemId]: string }
   const [userAnswers, setUserAnswers] = useState<{ [key: string]: string }>({})
-  const [results, setResults] = useState<{ [key: string]: { isCorrect: boolean; checked: boolean; showSolution: boolean } }>({})
+  const [results, setResults] = useState<{ [key: string]: { isCorrect: boolean; checked: boolean; showSolution: boolean; hint?: string } }>({})
 
   // สถานะหน้าสรุปภารกิจ (Mission Complete)
   const [isCompleted, setIsCompleted] = useState(false)
@@ -40,6 +47,21 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
     setStudent(JSON.parse(storedUser))
     fetchProblemSetAndData(JSON.parse(storedUser).id)
   }, [setId, router])
+
+  useEffect(() => {
+    // อุปกรณ์สัมผัส (แท็บเล็ต/มือถือ) → ใช้แป้นพิมพ์คณิตในแอปเป็นค่าเริ่มต้น ไม่เด้งคีย์บอร์ดเครื่อง
+    if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) {
+      setUseNativeKeyboard(false)
+    }
+    return () => {
+      if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
+    }
+  }, [])
+
+  // โฟกัสช่องคำตอบทุกครั้งที่เปลี่ยนข้อ
+  useEffect(() => {
+    if (!loading) inputRef.current?.focus()
+  }, [currentIndex, loading])
 
   const fetchProblemSetAndData = async (userId: string) => {
     try {
@@ -72,7 +94,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
       if (subData && subData.length > 0) {
         const ansMap: { [key: string]: string } = {}
-        const resMap: { [key: string]: { isCorrect: boolean; checked: boolean; showSolution: boolean } } = {}
+        const resMap: { [key: string]: { isCorrect: boolean; checked: boolean; showSolution: boolean; hint?: string } } = {}
 
         subData.forEach((sub) => {
           ansMap[sub.problem_id] = sub.student_answer
@@ -94,6 +116,13 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
   }
 
   const currentProb = problems[currentIndex]
+
+  // เปลี่ยนข้อด้วยมือ (ยกเลิกตัวนับเวลาเลื่อนข้ออัตโนมัติถ้ามี)
+  const goToIndex = (idx: number) => {
+    if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
+    setAdvancing(false)
+    setCurrentIndex(idx)
+  }
   // 🚨 ฟังก์ชันกดส่ง SOS ขอความช่วยเหลือจากคุณครู
   const handleSendSOS = async () => {
     if (!currentProb || !student) return
@@ -139,37 +168,47 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
   // ตรวจคำตอบอัจฉริยะด้วย mathjs
   const handleCheckAnswer = async () => {
-    if (!currentProb) return
+    if (!currentProb || advancing) return
     const studentAns = (userAnswers[currentProb.id] || '').trim()
     if (!studentAns) return
 
-    let isCorrect = false
-    try {
-      const cleanStudent = studentAns.replace(/\s+/g, '').toLowerCase()
-      const cleanCorrect = currentProb.correct_answer.replace(/\s+/g, '').toLowerCase()
-
-      if (cleanStudent === cleanCorrect) {
-        isCorrect = true
-      } else {
-        const nodeStudent = math.parse(cleanStudent)
-        const nodeCorrect = math.parse(cleanCorrect)
-        isCorrect = nodeStudent.equals(nodeCorrect)
-      }
-    } catch (e) {
-      isCorrect = studentAns.toLowerCase() === currentProb.correct_answer.toLowerCase()
-    }
+    // ตรวจด้วยตัวตรวจคำตอบคณิตศาสตร์ (เศษส่วน/จำนวนคละ/สมการ/รากที่สอง/ยกกำลัง) — ดู lib/answerMath.ts
+    const { correct: isCorrect, hint } = checkAnswer(studentAns, String(currentProb.correct_answer ?? ''))
 
     // เช็กว่าข้อนี้เคยตอบถูกไปหรือยัง (ถ้าเคยถูกแล้ว จะไม่บวก XP ซ้ำ)
     const prevResult = results[currentProb.id]
     const wasAlreadyCorrect = prevResult?.checked && prevResult?.isCorrect
 
-    setResults({
+    const submittedIndex = currentIndex
+    const newResults: { [key: string]: { isCorrect: boolean; checked: boolean; showSolution: boolean; hint?: string } } = {
       ...results,
-      [currentProb.id]: { isCorrect, checked: true, showSolution: false }
-    })
+      [currentProb.id]: { isCorrect, checked: true, showSolution: false, hint },
+    }
+    setResults(newResults)
 
     if (isCorrect) {
       confetti({ particleCount: 40, spread: 50, origin: { y: 0.7 } })
+
+      // ✅ ตอบถูก → ไปข้อถัดไปที่ "ยังไม่ถูก" ให้อัตโนมัติ (รอ ~1 วินาทีให้เห็นผลก่อน)
+      let nextIdx = -1
+      for (let i = submittedIndex + 1; i < problems.length; i++) {
+        if (!newResults[problems[i].id]?.isCorrect) {
+          nextIdx = i
+          break
+        }
+      }
+      if (nextIdx >= 0) {
+        setAdvancing(true)
+        if (advanceTimerRef.current) clearTimeout(advanceTimerRef.current)
+        advanceTimerRef.current = setTimeout(() => {
+          // ถ้าเด็กกดเปลี่ยนข้อเองไปแล้ว จะไม่เลื่อนซ้ำ
+          setCurrentIndex((cur) => (cur === submittedIndex ? nextIdx : cur))
+          setAdvancing(false)
+        }, 1000)
+      }
+    } else {
+      // ❌ ตอบผิด → อยู่ข้อเดิม ให้แก้คำตอบต่อได้เลย
+      requestAnimationFrame(() => inputRef.current?.focus())
     }
 
     // บันทึกลง Supabase submissions
@@ -379,19 +418,66 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
     }
   }
 
-  // ตัวช่วยใส่สัญลักษณ์จากปุ่มลัด
-  const insertSymbol = (symbol: string) => {
+  // ===== ตัวช่วยพิมพ์ด้วยแป้นพิมพ์คณิต (แทรก/ลบ ตรงตำแหน่งเคอร์เซอร์) =====
+  const setAnswer = (value: string) => {
     if (!currentProb) return
-    const currentVal = userAnswers[currentProb.id] || ''
-    setUserAnswers({
-      ...userAnswers,
-      [currentProb.id]: currentVal + symbol
+    setUserAnswers((prev) => ({ ...prev, [currentProb.id]: value }))
+  }
+
+  const placeCaret = (pos: number) => {
+    requestAnimationFrame(() => {
+      const input = inputRef.current
+      if (!input) return
+      input.focus()
+      input.setSelectionRange(pos, pos)
     })
+  }
+
+  // แทรกข้อความที่ตำแหน่งเคอร์เซอร์ caretOffset = ให้เคอร์เซอร์อยู่ห่างจากจุดเริ่มแทรกกี่ตัวอักษร (เช่น วางในวงเล็บแรก)
+  const insertAtCursor = (text: string, caretOffset?: number) => {
+    if (!currentProb) return
+    const val = userAnswers[currentProb.id] || ''
+    const start = inputRef.current?.selectionStart ?? val.length
+    const end = inputRef.current?.selectionEnd ?? val.length
+    setAnswer(val.slice(0, start) + text + val.slice(end))
+    placeCaret(start + (caretOffset ?? text.length))
+  }
+
+  const backspaceAtCursor = () => {
+    if (!currentProb) return
+    const val = userAnswers[currentProb.id] || ''
+    const start = inputRef.current?.selectionStart ?? val.length
+    const end = inputRef.current?.selectionEnd ?? val.length
+    if (start !== end) {
+      setAnswer(val.slice(0, start) + val.slice(end))
+      placeCaret(start)
+    } else if (start > 0) {
+      setAnswer(val.slice(0, start - 1) + val.slice(start))
+      placeCaret(start - 1)
+    }
+  }
+
+  const moveCaret = (delta: number) => {
+    const input = inputRef.current
+    if (!input) return
+    const pos = Math.max(0, Math.min(input.value.length, (input.selectionStart ?? 0) + delta))
+    placeCaret(pos)
   }
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังโหลดโจทย์...</div>
   }
+
+  // ค่าที่ใช้แสดงผลของข้อปัจจุบัน
+  const currentAnswer = currentProb ? userAnswers[currentProb.id] || '' : ''
+  const currentResult = currentProb ? results[currentProb.id] : undefined
+  const answerTex = answerToTex(currentAnswer) // '' = ยังไม่พิมพ์, null = แปลงไม่ได้ (โชว์ข้อความดิบ)
+  const allCorrect = problems.length > 0 && problems.every((p) => results[p.id]?.isCorrect)
+  const inputTone = currentResult?.checked
+    ? currentResult.isCorrect
+      ? 'border-emerald-300 bg-emerald-50/40'
+      : 'border-rose-300 bg-rose-50/40'
+    : 'border-gray-200'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
@@ -472,7 +558,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
             return (
               <button
                 key={prob.id}
-                onClick={() => setCurrentIndex(idx)}
+                onClick={() => goToIndex(idx)}
                 className={`w-9 h-9 rounded-xl font-extrabold text-xs border flex items-center justify-center transition cursor-pointer ${badgeColor}`}
               >
                 {idx + 1}
@@ -508,105 +594,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               </div>
             )}
 
-            {/* แป้นพิมพ์คณิตศาสตร์ลัด */}
-            <div className="bg-indigo-50/70 border border-indigo-100 p-3.5 rounded-2xl space-y-2">
-              <span className="text-xs font-extrabold text-indigo-900 block mb-1">
-                ⌨️ แป้นพิมพ์คณิตศาสตร์ด่วน (คลิกเพื่อพิมพ์):
-              </span>
-
-              {/* แถวตัวแปร */}
-              <div className="flex flex-wrap gap-1.5">
-                <span className="text-[11px] font-bold text-indigo-700 self-center mr-1">ตัวแปร:</span>
-                {['x', 'y', 'z', 'a', 'b', 'c', 'n', 'π'].map((char) => (
-                  <button
-                    key={char}
-                    type="button"
-                    onClick={() => insertSymbol(char)}
-                    className="w-9 h-9 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl border border-emerald-200 transition cursor-pointer flex items-center justify-center font-mono"
-                  >
-                    {char}
-                  </button>
-                ))}
-              </div>
-
-              {/* แถวตัวเลข */}
-              <div className="flex flex-wrap gap-1.5">
-                <span className="text-[11px] font-bold text-indigo-700 self-center mr-1">ตัวเลข:</span>
-                {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.'].map((num) => (
-                  <button
-                    key={num}
-                    type="button"
-                    onClick={() => insertSymbol(num)}
-                    className="w-9 h-9 bg-white hover:bg-indigo-100 text-indigo-800 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer flex items-center justify-center"
-                  >
-                    {num}
-                  </button>
-                ))}
-              </div>
-
-              {/* แถวเครื่องหมาย */}
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { label: '+', val: '+' },
-                  { label: '-', val: '-' },
-                  { label: '×', val: '*' },
-                  { label: '÷', val: '/' },
-                  { label: '=', val: '=' },
-                  { label: '≠', val: '!=' },
-                  { label: '>', val: '>' },
-                  { label: '<', val: '<' },
-                  { label: '≥', val: '>=' },
-                  { label: '≤', val: '<=' },
-                ].map((item) => (
-                  <button
-                    key={item.val}
-                    type="button"
-                    onClick={() => insertSymbol(item.val)}
-                    className="px-3 h-9 bg-purple-50 hover:bg-purple-100 text-purple-800 font-extrabold text-xs rounded-xl border border-purple-200 transition cursor-pointer flex items-center justify-center"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-              </div>
-
-              {/* แถวสัญลักษณ์พิเศษ & ปุ่มลบ */}
-              <div className="flex flex-wrap gap-1.5">
-                {[
-                  { label: 'x²', val: '^2' },
-                  { label: 'xⁿ', val: '^' },
-                  { label: '√x', val: 'sqrt(' },
-                  { label: '(', val: '(' },
-                  { label: ')', val: ')' },
-                  { label: 'เศษส่วน (/)', val: '/' },
-                ].map((item) => (
-                  <button
-                    key={item.val}
-                    type="button"
-                    onClick={() => insertSymbol(item.val)}
-                    className="px-3.5 h-8 bg-amber-50 hover:bg-amber-100 text-amber-900 font-extrabold text-xs rounded-xl border border-amber-200 transition cursor-pointer flex items-center justify-center"
-                  >
-                    {item.label}
-                  </button>
-                ))}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (!currentProb) return
-                    const currentVal = userAnswers[currentProb.id] || ''
-                    setUserAnswers({
-                      ...userAnswers,
-                      [currentProb.id]: currentVal.slice(0, -1)
-                    })
-                  }}
-                  className="px-3.5 h-8 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-xs rounded-xl border border-rose-200 transition cursor-pointer flex items-center justify-center ml-auto"
-                >
-                  ⌫ ลบตัวอักษร
-                </button>
-              </div>
-            </div>
-
-            {/* ฟอร์มกรอกคำตอบ */}
+            {/* ฟอร์มกรอกคำตอบ + พรีวิวสมการสด */}
             <div className="space-y-3">
               <div className="flex justify-between items-center">
                 <label className="block text-xs font-bold text-gray-500">คำตอบของคุณ:</label>
@@ -621,20 +609,45 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
               <div className="flex gap-2">
                 <input
+                  ref={inputRef}
                   type="text"
-                  placeholder="พิมพ์คำตอบที่นี่..."
-                  value={userAnswers[currentProb.id] || ''}
-                  onChange={(e) =>
-                    setUserAnswers({ ...userAnswers, [currentProb.id]: e.target.value })
-                  }
-                  className="flex-1 px-4 py-3 rounded-2xl border border-gray-200 focus:ring-2 focus:ring-indigo-500 outline-none font-semibold text-gray-800 text-base"
+                  inputMode={useNativeKeyboard ? 'text' : 'none'}
+                  autoComplete="off"
+                  autoCorrect="off"
+                  autoCapitalize="none"
+                  spellCheck={false}
+                  placeholder="พิมพ์คำตอบที่นี่... เช่น 1/2"
+                  value={currentAnswer}
+                  onChange={(e) => setAnswer(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleCheckAnswer()
+                    }
+                  }}
+                  className={`flex-1 min-w-0 px-4 py-3 rounded-2xl border focus:ring-2 focus:ring-indigo-500 outline-none font-semibold text-gray-800 text-base font-mono transition ${inputTone}`}
                 />
                 <button
                   onClick={handleCheckAnswer}
-                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-extrabold rounded-2xl shadow-md transition cursor-pointer"
+                  disabled={advancing || !currentAnswer.trim()}
+                  className="px-6 py-3 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold rounded-2xl shadow-md transition cursor-pointer"
                 >
                   ส่งคำตอบ
                 </button>
+              </div>
+
+              {/* 👁️ พรีวิวคำตอบเป็นสมการคณิตศาสตร์จริง (เศษส่วนซ้อน ยกกำลัง รากที่สอง จำนวนคละ) */}
+              <div className="min-h-[4.5rem] bg-gradient-to-r from-indigo-50/70 to-purple-50/70 border border-indigo-100 rounded-2xl px-4 py-3 flex items-center justify-center overflow-x-auto text-xl">
+                {answerTex === '' ? (
+                  <span className="text-xs text-gray-400 font-bold">👁️ พิมพ์คำตอบแล้วจะแสดงเป็นสมการตรงนี้</span>
+                ) : answerTex === null ? (
+                  <span className="font-mono text-base text-gray-700">{currentAnswer}</span>
+                ) : (
+                  <InlineMath
+                    math={`\\displaystyle ${answerTex}`}
+                    renderError={() => <span className="font-mono text-base text-gray-700">{currentAnswer}</span>}
+                  />
+                )}
               </div>
             </div>
 
@@ -649,7 +662,11 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               >
                 <span>
                   {results[currentProb.id].isCorrect
-                    ? '🎉 ถูกต้อง! เก่งมากครับ'
+                    ? advancing
+                      ? '🎉 ถูกต้อง! ไปข้อต่อไปกันเลย...'
+                      : allCorrect
+                      ? '🎉 ถูกครบทุกข้อแล้ว! กดจบภารกิจได้เลย'
+                      : '🎉 ถูกต้อง! เก่งมากครับ'
                     : '❌ ยังไม่ถูกต้อง ลองคิดดูใหม่อีกนิด!'}
                 </span>
                 {currentProb.solution_text && (
@@ -668,6 +685,12 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                     {results[currentProb.id].showSolution ? 'ซ่อนวิธีทำ' : 'ดูวิธีทำละเอียด'}
                   </button>
                 )}
+              </div>
+            )}
+
+            {currentResult?.hint && (
+              <div className="p-3 bg-amber-50 border border-amber-200 rounded-2xl text-amber-900 text-xs font-bold">
+                💬 {currentResult.hint}
               </div>
             )}
 
@@ -696,19 +719,155 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               </div>
             )}
 
+            {/* ⌨️ แป้นพิมพ์คณิตศาสตร์ (กดแล้วแทรกตรงตำแหน่งเคอร์เซอร์) */}
+            <div className="bg-indigo-50/70 border border-indigo-100 p-3.5 rounded-2xl space-y-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs font-extrabold text-indigo-900">⌨️ แป้นพิมพ์คณิตศาสตร์ (กดเพื่อพิมพ์):</span>
+                <button
+                  type="button"
+                  onClick={() => setUseNativeKeyboard((v) => !v)}
+                  className="px-2.5 py-1 bg-white hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-lg border border-indigo-200 transition cursor-pointer"
+                >
+                  {useNativeKeyboard ? '📱 ซ่อนคีย์บอร์ดเครื่อง (ใช้แป้นนี้)' : '⌨️ เปิดคีย์บอร์ดเครื่อง'}
+                </button>
+              </div>
+
+              {/* แถวรูปแบบพิเศษ: เศษส่วน จำนวนคละ ยกกำลัง ราก */}
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { key: 'frac', tex: '\\frac{\\square}{\\square}', text: '()/()', caret: 1, tip: 'เศษส่วน' },
+                  { key: 'mixed', tex: '\\square\\frac{\\square}{\\square}', text: '_()/()', caret: 2, tip: 'จำนวนคละ (พิมพ์จำนวนเต็มก่อนแล้วกดปุ่มนี้)' },
+                  { key: 'sq', tex: 'x^{2}', text: '^2', caret: 2, tip: 'ยกกำลังสอง' },
+                  { key: 'pow', tex: 'x^{\\square}', text: '^()', caret: 2, tip: 'ยกกำลัง n' },
+                  { key: 'sqrt', tex: '\\sqrt{\\square}', text: 'sqrt()', caret: 5, tip: 'รากที่สอง' },
+                  { key: 'cbrt', tex: '\\sqrt[3]{\\square}', text: 'cbrt()', caret: 5, tip: 'รากที่สาม' },
+                  { key: 'pi', tex: '\\pi', text: 'pi', caret: 2, tip: 'พาย' },
+                ].map((b) => (
+                  <button
+                    key={b.key}
+                    type="button"
+                    title={b.tip}
+                    onClick={() => insertAtCursor(b.text, b.caret)}
+                    className="px-3.5 h-11 bg-amber-50 hover:bg-amber-100 text-amber-900 rounded-xl border border-amber-200 transition cursor-pointer flex items-center justify-center"
+                  >
+                    <InlineMath math={b.tex} />
+                  </button>
+                ))}
+              </div>
+
+              {/* แถวตัวแปร */}
+              <div className="flex flex-wrap gap-1.5">
+                <span className="text-[11px] font-bold text-indigo-700 self-center mr-1">ตัวแปร:</span>
+                {['x', 'y', 'z', 'a', 'b', 'c', 'n'].map((char) => (
+                  <button
+                    key={char}
+                    type="button"
+                    onClick={() => insertAtCursor(char)}
+                    className="w-9 h-9 bg-emerald-50 hover:bg-emerald-100 text-emerald-800 font-extrabold text-xs rounded-xl border border-emerald-200 transition cursor-pointer flex items-center justify-center font-mono"
+                  >
+                    {char}
+                  </button>
+                ))}
+              </div>
+
+              {/* แถวตัวเลข */}
+              <div className="flex flex-wrap gap-1.5">
+                <span className="text-[11px] font-bold text-indigo-700 self-center mr-1">ตัวเลข:</span>
+                {['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '.'].map((num) => (
+                  <button
+                    key={num}
+                    type="button"
+                    onClick={() => insertAtCursor(num)}
+                    className="w-9 h-9 bg-white hover:bg-indigo-100 text-indigo-800 font-extrabold text-xs rounded-xl border border-indigo-200 transition cursor-pointer flex items-center justify-center"
+                  >
+                    {num}
+                  </button>
+                ))}
+              </div>
+
+              {/* แถวเครื่องหมาย */}
+              <div className="flex flex-wrap gap-1.5">
+                {[
+                  { label: '+', val: '+' },
+                  { label: '-', val: '-' },
+                  { label: '×', val: '*' },
+                  { label: '÷', val: '/' },
+                  { label: '=', val: '=' },
+                  { label: '≠', val: '!=' },
+                  { label: '>', val: '>' },
+                  { label: '<', val: '<' },
+                  { label: '≥', val: '>=' },
+                  { label: '≤', val: '<=' },
+                  { label: '(', val: '(' },
+                  { label: ')', val: ')' },
+                ].map((item) => (
+                  <button
+                    key={item.label}
+                    type="button"
+                    onClick={() => insertAtCursor(item.val)}
+                    className="px-3 h-9 bg-purple-50 hover:bg-purple-100 text-purple-800 font-extrabold text-xs rounded-xl border border-purple-200 transition cursor-pointer flex items-center justify-center"
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* แถวควบคุมเคอร์เซอร์ / ลบ */}
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => moveCaret(-1)}
+                  className="px-4 h-9 bg-white hover:bg-gray-100 text-gray-700 font-extrabold text-xs rounded-xl border border-gray-200 transition cursor-pointer"
+                  title="เลื่อนเคอร์เซอร์ไปซ้าย"
+                >
+                  ◀
+                </button>
+                <button
+                  type="button"
+                  onClick={() => moveCaret(1)}
+                  className="px-4 h-9 bg-white hover:bg-gray-100 text-gray-700 font-extrabold text-xs rounded-xl border border-gray-200 transition cursor-pointer"
+                  title="เลื่อนเคอร์เซอร์ไปขวา"
+                >
+                  ▶
+                </button>
+                <button
+                  type="button"
+                  onClick={backspaceAtCursor}
+                  className="px-3.5 h-9 bg-rose-50 hover:bg-rose-100 text-rose-700 font-extrabold text-xs rounded-xl border border-rose-200 transition cursor-pointer ml-auto"
+                >
+                  ⌫ ลบ
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setAnswer('')
+                    placeCaret(0)
+                  }}
+                  className="px-3.5 h-9 bg-gray-100 hover:bg-gray-200 text-gray-600 font-extrabold text-xs rounded-xl border border-gray-200 transition cursor-pointer"
+                >
+                  🗑️ ล้าง
+                </button>
+              </div>
+
+              <p className="text-[11px] text-indigo-700/80 font-semibold leading-relaxed">
+                💡 พิมพ์ <span className="font-mono">1/2</span> จะกลายเป็นเศษส่วนในกล่องตัวอย่างทันที · กด ▫/▫ แล้วกรอกบน/ล่างโดยใช้ ◀ ▶ ·
+                จำนวนคละ: พิมพ์จำนวนเต็มก่อน (เช่น 3) แล้วกดปุ่มจำนวนคละ · กด Enter เพื่อส่งคำตอบ
+              </p>
+            </div>
+
             {/* ปุ่มเปลี่ยนข้อซ้าย-ขวา & ปุ่มส่งงาน */}
             <div className="flex justify-between items-center pt-4 border-t border-gray-100">
               <button
                 disabled={currentIndex === 0}
-                onClick={() => setCurrentIndex(currentIndex - 1)}
+                onClick={() => goToIndex(currentIndex - 1)}
                 className="px-4 py-2 bg-gray-100 hover:bg-gray-200 disabled:opacity-40 text-gray-700 text-xs font-bold rounded-xl transition cursor-pointer"
               >
                 ← ข้อก่อนหน้า
               </button>
 
-              {currentIndex < problems.length - 1 ? (
+              {currentIndex < problems.length - 1 && !allCorrect ? (
                 <button
-                  onClick={() => setCurrentIndex(currentIndex + 1)}
+                  onClick={() => goToIndex(currentIndex + 1)}
                   className="px-5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-xl shadow transition cursor-pointer"
                 >
                   ข้อถัดไป →
@@ -717,7 +876,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                 <button
                   onClick={handleFinishMission}
                   disabled={savingSummary}
-                  className="px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl shadow-lg transition cursor-pointer"
+                  className={`px-6 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-extrabold rounded-xl shadow-lg transition cursor-pointer ${allCorrect ? 'animate-pulse' : ''}`}
                 >
                   {savingSummary ? 'กำลังบันทึก...' : '🏁 จบภารกิจ & ดูสรุปผล!'}
                 </button>
