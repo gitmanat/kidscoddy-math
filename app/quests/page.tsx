@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
 import { CompletedAvatarsBadge } from '@/components/AvatarDisplay'
+import AssignDateField from '@/components/AssignDateField'
 
 // =====================================================================
 // 📅 ฟังก์ชันช่วยจัดการ "วัน" ของภารกิจ (ใช้เวลาท้องถิ่นของเครื่อง ไม่ใช่ UTC)
@@ -167,6 +168,19 @@ export default function SpecialQuestsPage() {
     }
   }
 
+  // 👩‍🏫 แอดมินเปลี่ยน "วันเปิดภารกิจ" ได้จากการ์ดโดยตรง (บันทึกลง special_quests.start_date)
+  const isAdmin = student?.role === 'admin'
+  const handleChangeQuestDate = async (questId: string, newDate: string) => {
+    const [y, m, d] = newDate.split('-').map(Number)
+    const startIso = new Date(y, m - 1, d, 0, 0, 0).toISOString() // เที่ยงคืนของวันนั้นตามเวลาเครื่อง
+    const { error } = await supabase.from('special_quests').update({ start_date: startIso }).eq('id', questId)
+    if (error) {
+      alert(`เปลี่ยนวันไม่สำเร็จ: ${error.message}`)
+      return
+    }
+    setQuests((prev) => prev.map((q) => (q.id === questId ? { ...q, start_date: startIso } : q)))
+  }
+
   const handleStartQuest = (setId: string) => {
     router.push(`/practice/${setId}`)
   }
@@ -248,20 +262,20 @@ export default function SpecialQuestsPage() {
   const todaySummary = dateSummary[todayStr] || { total: 0, done: 0, open: 0 }
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดกระดานภารกิจลับ...</div>
+    return <div className="min-h-screen flex items-center justify-center text-red-600 font-bold">กำลังเปิดกระดานภารกิจลับ...</div>
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
-      <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-indigo-100 px-6 py-4 sticky top-0 z-10">
+    <div className="min-h-screen bg-gradient-to-br from-red-50 via-rose-50 to-orange-50 pb-12">
+      <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-red-100 px-6 py-4 sticky top-0 z-10">
         <div className="max-w-4xl mx-auto flex justify-between items-center">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-rose-500 to-pink-500 text-white flex items-center justify-center font-black text-lg shadow-md shadow-rose-200">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-red-600 to-rose-500 text-white flex items-center justify-center font-black text-lg shadow-md shadow-red-200">
               🎯
             </div>
             <div>
               <h1 className="font-extrabold text-gray-800 text-base">KidsCoddy Special Quests</h1>
-              <p className="text-xs text-rose-600 font-bold">ภารกิจท้าทายพิเศษ รับรางวัลจัดเต็ม!</p>
+              <p className="text-xs text-red-600 font-bold">ภารกิจท้าทายพิเศษ รับรางวัลจัดเต็ม!</p>
             </div>
           </div>
 
@@ -275,10 +289,11 @@ export default function SpecialQuestsPage() {
       </header>
 
       <main className="max-w-4xl mx-auto px-6 mt-8 space-y-6">
-        <div className="bg-gradient-to-r from-rose-600 to-purple-600 rounded-3xl p-6 text-white shadow-xl flex justify-between items-center">
+        <div className="bg-gradient-to-r from-red-600 via-red-600 to-rose-700 rounded-3xl p-6 text-white shadow-xl shadow-red-300/50 flex justify-between items-center relative overflow-hidden">
+          <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
           <div>
             <h2 className="text-xl font-black mb-1">🔥 กระดานภารกิจท้าทายประจำวัน</h2>
-            <p className="text-xs text-rose-100">
+            <p className="text-xs text-red-100">
               {todaySummary.total === 0
                 ? 'วันนี้ยังไม่มีภารกิจพิเศษ เลือกดูภารกิจวันอื่นได้ด้านล่าง'
                 : todaySummary.open > 0
@@ -290,14 +305,14 @@ export default function SpecialQuestsPage() {
         </div>
 
         {/* 📅 การ์ดเลือกวัน */}
-        <div className="bg-white/95 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-indigo-100 space-y-4">
+        <div className="bg-gradient-to-br from-red-50 via-white to-rose-50 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-md border-2 border-red-200 space-y-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <button
                 onClick={() => prevQuestDate && goToDate(prevQuestDate)}
                 disabled={!prevQuestDate}
                 title="ไปวันก่อนหน้าที่มีภารกิจ"
-                className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-rose-100 text-rose-700 font-black transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-red-100 text-red-700 font-black transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 ◀
               </button>
@@ -309,7 +324,7 @@ export default function SpecialQuestsPage() {
                   <span
                     className={`inline-block mt-0.5 px-2.5 py-0.5 text-[10px] font-black rounded-full ${
                       activeDate === todayStr
-                        ? 'bg-rose-600 text-white'
+                        ? 'bg-red-600 text-white'
                         : activeDate < todayStr
                         ? 'bg-gray-200 text-gray-600'
                         : 'bg-sky-100 text-sky-700'
@@ -323,7 +338,7 @@ export default function SpecialQuestsPage() {
                 onClick={() => nextQuestDate && goToDate(nextQuestDate)}
                 disabled={!nextQuestDate}
                 title="ไปวันถัดไปที่มีภารกิจ"
-                className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-rose-100 text-rose-700 font-black transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                className="w-9 h-9 rounded-xl bg-gray-100 hover:bg-red-100 text-red-700 font-black transition cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 ▶
               </button>
@@ -334,12 +349,12 @@ export default function SpecialQuestsPage() {
                 type="date"
                 value={activeDate}
                 onChange={(e) => e.target.value && goToDate(e.target.value)}
-                className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-rose-400 cursor-pointer"
+                className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-red-400 cursor-pointer"
               />
               <button
                 onClick={() => goToDate(todayStr)}
                 disabled={activeDate === todayStr && viewMode === 'day'}
-                className="px-3.5 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold transition cursor-pointer disabled:opacity-40 disabled:cursor-default"
+                className="px-3.5 py-2 rounded-xl bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold transition cursor-pointer disabled:opacity-40 disabled:cursor-default"
               >
                 กลับมาวันนี้
               </button>
@@ -382,9 +397,9 @@ export default function SpecialQuestsPage() {
                     onClick={() => goToDate(d)}
                     className={`flex flex-col items-center py-2 rounded-2xl border text-xs font-extrabold transition cursor-pointer ${
                       isActive
-                        ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white border-transparent shadow-md'
+                        ? 'bg-gradient-to-r from-red-500 to-rose-600 text-white border-transparent shadow-md'
                         : isToday
-                        ? 'bg-rose-50 text-rose-700 border-rose-300'
+                        ? 'bg-red-50 text-red-700 border-red-300'
                         : 'bg-gray-50 hover:bg-gray-100 text-gray-600 border-gray-100'
                     }`}
                   >
@@ -444,12 +459,12 @@ export default function SpecialQuestsPage() {
 
         {/* แท็บสถานะ — ใช้เฉพาะโหมดรายวัน */}
         {viewMode === 'day' && (
-          <div className="flex flex-wrap bg-white/90 p-1.5 rounded-2xl border border-indigo-100 shadow-xs gap-1 w-fit">
+          <div className="flex flex-wrap bg-white/90 p-1.5 rounded-2xl border border-red-100 shadow-xs gap-1 w-fit">
             <button
               onClick={() => { setStatusTab('todo'); setShowAll(false) }}
               className={`px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
                 statusTab === 'todo'
-                  ? 'bg-gradient-to-r from-rose-500 to-pink-500 text-white shadow-sm'
+                  ? 'bg-gradient-to-r from-red-600 to-rose-500 text-white shadow-sm'
                   : 'text-gray-600 hover:bg-gray-100'
               }`}
             >
@@ -478,7 +493,7 @@ export default function SpecialQuestsPage() {
 
         {/* รายการภารกิจ */}
         {filteredItems.length === 0 ? (
-          <div className="bg-white/90 rounded-3xl p-12 text-center border border-indigo-100 space-y-3">
+          <div className="bg-white/90 rounded-3xl p-12 text-center border border-red-100 space-y-3">
             {viewMode === 'backlog' ? (
               <>
                 <span className="text-4xl">🎉</span>
@@ -491,7 +506,7 @@ export default function SpecialQuestsPage() {
                 {prevQuestDate && (
                   <button
                     onClick={() => goToDate(prevQuestDate)}
-                    className="px-4 py-2 bg-rose-600 hover:bg-rose-700 text-white text-xs font-extrabold rounded-xl transition cursor-pointer"
+                    className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-extrabold rounded-xl transition cursor-pointer"
                   >
                     ไปดูวันล่าสุดที่มีภารกิจ ({formatThaiDate(prevQuestDate, { day: 'numeric', month: 'short' })})
                   </button>
@@ -513,24 +528,33 @@ export default function SpecialQuestsPage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
             {displayedItems.map(({ quest, date, state }) => {
               const isDone = state === 'done'
+              const isOpen = state === 'open'
               const finishers = questCompletionsByQuest[quest.id] || []
               const endDate = getQuestEndDate(quest)
 
               return (
                 <div
                   key={quest.id}
-                  className={`bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-sm border flex flex-col justify-between transition group ${
+                  className={`p-6 rounded-3xl border flex flex-col justify-between transition-all duration-200 group relative overflow-hidden ${
                     isDone
-                      ? 'border-emerald-200 bg-emerald-50/15'
-                      : state === 'open'
-                      ? 'border-indigo-100 hover:shadow-md'
-                      : 'border-gray-200 bg-gray-50/60'
+                      ? 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 border-2 border-emerald-300 shadow-md'
+                      : isOpen
+                      ? 'bg-gradient-to-br from-red-500 via-red-600 to-rose-600 border-transparent shadow-xl shadow-red-300/60 hover:-translate-y-1 hover:shadow-2xl'
+                      : 'bg-gray-50 border-gray-200 shadow-sm'
                   }`}
                 >
-                  <div className="space-y-2">
+                  {/* ลวดลายตกแต่ง (เฉพาะภารกิจที่ทำได้ตอนนี้) */}
+                  {isOpen && (
+                    <>
+                      <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
+                      <div className="absolute -right-4 -bottom-6 text-9xl opacity-10 select-none pointer-events-none rotate-12">🎯</div>
+                    </>
+                  )}
+
+                  <div className="space-y-2 relative z-10">
                     <div className="flex justify-between items-start gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <span className="px-3 py-1 bg-rose-50 text-rose-700 text-[10px] font-extrabold rounded-full">
+                        <span className={`px-3 py-1 text-[10px] font-extrabold rounded-full ${isOpen ? 'bg-white/90 text-red-700 shadow-sm' : 'bg-rose-50 text-rose-700'}`}>
                           ⭐ ภารกิจพิเศษ
                         </span>
                         {/* โหมดภารกิจค้าง: แสดงวันที่ของภารกิจ กดเพื่อไปดูวันนั้นได้ */}
@@ -549,26 +573,40 @@ export default function SpecialQuestsPage() {
                           <CoinIcon className="w-4 h-4" />
                           <span>+{quest.reward_coins}</span>
                         </div>
-                        <div className="text-xs font-bold text-purple-700 bg-purple-50 px-2.5 py-1 rounded-xl border border-purple-200">
+                        <div className={`text-xs font-bold px-2.5 py-1 rounded-xl border ${isOpen ? 'text-red-700 bg-white/90 border-white shadow-sm' : 'text-purple-700 bg-purple-50 border-purple-200'}`}>
                           ✨ +{quest.reward_xp} XP
                         </div>
                       </div>
                     </div>
 
-                    <h3 className="text-base font-black text-gray-800 pt-1">{quest.title}</h3>
-                    <p className="text-xs text-gray-500 leading-relaxed">{quest.description || 'ทำภารกิจชุดนี้ให้สำเร็จเพื่อรับรางวัลพิเศษ'}</p>
+                    <h3 className={`text-base md:text-lg font-black pt-1 ${isOpen ? 'text-white drop-shadow-sm' : 'text-gray-800'}`}>{quest.title}</h3>
+                    <p className={`text-xs leading-relaxed ${isOpen ? 'text-white/90' : 'text-gray-500'}`}>{quest.description || 'ทำภารกิจชุดนี้ให้สำเร็จเพื่อรับรางวัลพิเศษ'}</p>
+
+                    {/* 👩‍🏫 เฉพาะแอดมิน: ย้าย/เปลี่ยนวันเปิดของภารกิจนี้ */}
+                    {isAdmin && (
+                      <div className={`p-2.5 rounded-2xl ${isOpen ? 'bg-white/90' : 'bg-white/70 border border-dashed border-gray-200'}`}>
+                        <AssignDateField
+                          compact
+                          label="📅 วันเปิดภารกิจ"
+                          value={date}
+                          onChange={(v) => handleChangeQuestDate(quest.id, v)}
+                        />
+                      </div>
+                    )}
 
                     {endDate && !isDone && (
-                      <p className={`text-[11px] font-bold ${state === 'expired' ? 'text-gray-400' : 'text-orange-600'}`}>
+                      <p className={`text-[11px] font-bold ${state === 'expired' ? 'text-gray-400' : isOpen ? 'text-yellow-200' : 'text-orange-600'}`}>
                         ⏰ หมดเขต {formatThaiDate(endDate, { day: 'numeric', month: 'short', year: '2-digit' })}
                       </p>
                     )}
                   </div>
 
                   {/* 🏆 แสดงรายชื่อและอวตารของเพื่อนที่พิชิตภารกิจพิเศษนี้แล้ว */}
-                  <CompletedAvatarsBadge completedUsers={finishers} />
+                  <div className="relative z-10">
+                    <CompletedAvatarsBadge completedUsers={finishers} />
+                  </div>
 
-                  <div>
+                  <div className="relative z-10">
                     {isDone ? (
                       <div className="w-full py-3 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-2xl text-center border border-emerald-200">
                         ✓ พิชิตภารกิจสำเร็จแล้ว
@@ -584,7 +622,7 @@ export default function SpecialQuestsPage() {
                     ) : (
                       <button
                         onClick={() => handleStartQuest(quest.target_set_id)}
-                        className="w-full py-3 bg-gradient-to-r from-rose-500 to-pink-500 hover:from-rose-600 hover:to-pink-600 text-white text-xs font-extrabold rounded-2xl shadow-md transition cursor-pointer"
+                        className="w-full py-3.5 bg-white hover:bg-red-50 text-red-600 text-sm font-black rounded-2xl shadow-lg shadow-red-900/20 transition transform active:scale-95 cursor-pointer"
                       >
                         🚀 ลุยภารกิจนี้เลย!
                       </button>
@@ -601,7 +639,7 @@ export default function SpecialQuestsPage() {
           <div className="flex justify-center">
             <button
               onClick={() => setShowAll(!showAll)}
-              className="px-6 py-3 bg-white hover:bg-rose-50 text-rose-700 border border-rose-200 font-black text-xs rounded-2xl shadow-sm transition cursor-pointer"
+              className="px-6 py-3 bg-white hover:bg-red-50 text-red-700 border border-red-200 font-black text-xs rounded-2xl shadow-sm transition cursor-pointer"
             >
               {showAll ? '▲ ย่อรายการให้สั้นลง' : `▼ แสดงภารกิจทั้งหมด (เหลืออีก ${filteredItems.length - PAGE_SIZE} ภารกิจ)`}
             </button>
