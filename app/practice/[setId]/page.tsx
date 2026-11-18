@@ -675,7 +675,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                   autoCorrect="off"
                   autoCapitalize="none"
                   spellCheck={false}
-                  placeholder="พิมพ์คำตอบที่นี่... เช่น 1/2"
+                  placeholder="พิมพ์คำตอบที่นี่..."
                   value={currentAnswer}
                   onChange={(e) => setAnswer(e.target.value)}
                   onKeyDown={(e) => {
@@ -843,6 +843,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                   { label: '-', val: '-' },
                   { label: '×', val: '*' },
                   { label: '÷', val: '/' },
+                  { label: ':', val: ':' },
                   { label: '=', val: '=' },
                   { label: '≠', val: '!=' },
                   { label: '>', val: '>' },
@@ -855,6 +856,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                   <button
                     key={item.label}
                     type="button"
+                    title={item.label === ':' ? 'อัตราส่วน (เช่น 1:2 หรือ 1:2:3)' : undefined}
                     onClick={() => insertAtCursor(item.val)}
                     className="px-3 h-9 bg-purple-50 hover:bg-purple-100 text-purple-800 font-extrabold text-xs rounded-xl border border-purple-200 transition cursor-pointer flex items-center justify-center"
                   >

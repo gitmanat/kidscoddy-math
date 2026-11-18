@@ -9,11 +9,12 @@ import * as math from 'mathjs'
 //   ยกกำลัง      x^2   (x+1)^2   2^(n+1)
 //   รากที่สอง    sqrt(2)   √2   รากที่สาม cbrt(8)
 //   จำนวนคละ     1_1/2  หรือ  1 1/2   (จำนวนเต็ม + เศษส่วน)
+//   อัตราส่วน     1:2   1:2:3   1/2:3/4
 //   สมการ/อสมการ x=3   y=2x+1   x>=2   x<5
 //   คูณ ×        2*3  (ใส่ติดกัน 2x ก็ได้)
 // =====================================================================
 
-/** true = ถ้าตอบเป็นเศษส่วนต้องเป็นเศษส่วนอย่างต่ำ (เช่น 2/4 ไม่ผ่านเมื่อเฉลยคือ 1/2) */
+/** true = ถ้าตอบเป็นเศษส่วน/อัตราส่วนต้องเป็นรูปอย่างต่ำ (เช่น 2/4 หรือ 2:4 ไม่ผ่านเมื่อเฉลยคือ 1/2 หรือ 1:2) */
 export const REQUIRE_LOWEST_TERMS = true
 
 export type AnswerCheck = { correct: boolean; hint?: string }
@@ -44,6 +45,7 @@ export function cleanAnswer(raw: unknown): string {
     .replace(/[−–—]/g, '-')
     .replace(/[×·]/g, '*')
     .replace(/÷/g, '/')
+    .replace(/：/g, ':') // รองรับโคลอนแบบ full-width เผื่อเด็กพิมพ์จากคีย์บอร์ดไทย/จีน
     .replace(/π/g, 'pi')
     .replace(/≥/g, '>=')
     .replace(/≤/g, '<=')
@@ -140,7 +142,6 @@ function equationsEqual(a: string, b: string): boolean {
   const pb = b.split('=')
   if (pa.length !== 2 || pb.length !== 2) return false
 
-  // เฉลยเป็นรูปแก้แล้ว เช่น x=3 → เด็กต้องตอบให้ตัวแปรอยู่โดดๆ ด้านใดด้านหนึ่ง (ไม่รับ 2x=6)
   const solved = /^[a-z]$/.test(pb[0]) && !new RegExp(`\\b${pb[0]}\\b`).test(pb[1])
   if (solved && !(pa[0] === pb[0] || pa[1] === pb[0])) return false
 
@@ -190,11 +191,11 @@ function relationsEqual(a: string, b: string): boolean {
 }
 
 // ---------------------------------------------------------------------
-// 4) กติกา "เศษส่วนอย่างต่ำ"
+// 4) กติกา "เศษส่วนอย่างต่ำ" และ "อัตราส่วน (1:2, 1:2:3)"
 // ---------------------------------------------------------------------
 const gcd = (a: number, b: number): number => (b === 0 ? Math.abs(a) : gcd(b, a % b))
+const gcdList = (nums: number[]): number => nums.reduce((acc, n) => gcd(acc, n), 0)
 
-// คืน { reduced: boolean } ถ้าเป็นเศษส่วน/จำนวนคละ — คืน null ถ้าไม่ใช่เศษส่วนล้วน
 function fractionForm(clean: string): { reduced: boolean } | null {
   const mixed = parseMixed(clean)
   const fracRe = /^\(?(\d+)\)?\/\(?(\d+)\)?$/
@@ -210,6 +211,89 @@ function fractionForm(clean: string): { reduced: boolean } | null {
   return { reduced: d > 0 && gcd(n, d) === 1 }
 }
 
+// ตรวจอัตราส่วนอย่างต่ำ (กรณีพจน์ทั้งหมดเป็นจำนวนเต็ม)
+function ratioForm(parts: string[]): { reduced: boolean } | null {
+  const ints: number[] = []
+  for (const p of parts) {
+    const t = p.trim()
+    if (!/^-?\d+$/.test(t)) return null // มีเศษส่วน/ทศนิยม/ตัวแปรในพจน์
+    ints.push(Math.abs(Number(t)))
+  }
+  const nonZero = ints.filter((n) => n > 0)
+  if (nonZero.length === 0) return { reduced: true }
+  return { reduced: gcdList(nonZero) === 1 }
+}
+
+// เปรียบเทียบอัตราส่วน เช่น 1:2 กับ 2:4 หรือ 1:2:3 กับ 2:4:6
+function checkRatioAnswer(sClean: string, cClean: string): AnswerCheck {
+  const sParts = sClean.split(':').map((p) => p.trim())
+  const cParts = cClean.split(':').map((p) => p.trim())
+
+  if (sParts.length !== cParts.length || sParts.length < 2) return { correct: false }
+  if (sParts.some((p) => !p) || cParts.some((p) => !p)) return { correct: false }
+
+  const sExprs = sParts.map(toExpr)
+  const cExprs = cParts.map(toExpr)
+  const vars = collectSymbols(...sExprs, ...cExprs)
+
+  const checkWithScope = (scope: Record<string, number>): boolean | null => {
+    const sVals: number[] = []
+    const cVals: number[] = []
+    for (let i = 0; i < sExprs.length; i++) {
+      let sv: number, cv: number
+      try {
+        sv = toNum(math.evaluate(sExprs[i], { ...scope }))
+        cv = toNum(math.evaluate(cExprs[i], { ...scope }))
+      } catch {
+        return null
+      }
+      if (!Number.isFinite(sv) || !Number.isFinite(cv)) return null
+      sVals.push(sv)
+      cVals.push(cv)
+    }
+
+    // หาตัวคูณสเกล k ที่ทำให้ sVals[i] = k * cVals[i] ในทุกพจน์ (k ต้อง > 0 เพื่อไม่ให้ -1:-2 เท่ากับ 1:2 โดยไม่ตั้งใจ หรือกลับทิศ)
+    let scale: number | null = null
+    for (let i = 0; i < sVals.length; i++) {
+      if (Math.abs(cVals[i]) < 1e-9) {
+        if (Math.abs(sVals[i]) > 1e-9) return false
+      } else {
+        const k = sVals[i] / cVals[i]
+        if (k <= 1e-9) return false
+        if (scale === null) scale = k
+        else if (!close(scale, k)) return false
+      }
+    }
+    return scale !== null
+  }
+
+  if (vars.length === 0) {
+    const ok = checkWithScope({})
+    if (!ok) return { correct: false }
+  } else {
+    let used = 0
+    for (let t = 0; t < 8; t++) {
+      const ok = checkWithScope(sampleScope(vars, t))
+      if (ok === null) continue
+      if (!ok) return { correct: false }
+      used++
+    }
+    if (used < 3) return { correct: false }
+  }
+
+  // เช็กอัตราส่วนอย่างต่ำ
+  if (REQUIRE_LOWEST_TERMS) {
+    const sf = ratioForm(sParts)
+    const cf = ratioForm(cParts)
+    const correctIsReduced = cf ? cf.reduced : true
+    if (sf && !sf.reduced && correctIsReduced) {
+      return { correct: false, hint: 'สัดส่วนถูกแล้ว! แต่ลองทำอัตราส่วนให้เป็นอย่างต่ำก่อนนะ 😊' }
+    }
+  }
+
+  return { correct: true }
+}
+
 // ---------------------------------------------------------------------
 // 5) ตรวจคำตอบ
 // ---------------------------------------------------------------------
@@ -218,14 +302,21 @@ export function checkAnswer(studentRaw: string, correctRaw: string): AnswerCheck
   const cClean = cleanAnswer(correctRaw)
   if (!sClean) return { correct: false }
 
-  const s = toExpr(sClean)
-  const c = toExpr(cClean)
-  if (s === c) return { correct: true }
-
   try {
+    // 1. กรณีเป็นอัตราส่วน (มีเครื่องหมาย :)
+    if (sClean.includes(':') || cClean.includes(':')) {
+      return checkRatioAnswer(sClean, cClean)
+    }
+
+    const s = toExpr(sClean)
+    const c = toExpr(cClean)
+    if (s === c) return { correct: true }
+
+    // 2. กรณีอสมการ / สมการ
     if (REL.test(s) || REL.test(c)) return { correct: relationsEqual(s, c) }
     if (s.includes('=') || c.includes('=')) return { correct: equationsEqual(s, c) }
 
+    // 3. กรณีนิพจน์ / ตัวเลข / เศษส่วนทั่วไป
     if (!expressionsEqual(s, c)) return { correct: false }
 
     if (REQUIRE_LOWEST_TERMS) {
@@ -287,14 +378,14 @@ function exprToTex(token: string): string | null {
 }
 
 const REL_TEX: Record<string, string> = {
-  '>=': '\\geq', '<=': '\\leq', '!=': '\\neq', '=': '=', '>': '>', '<': '<',
+  '>=': '\\geq', '<=': '\\leq', '!=': '\\neq', '=': '=', '>': '>', '<': '<', ':': ':',
 }
 
 /** คืนสตริง LaTeX ของคำตอบ, '' ถ้ายังไม่ได้พิมพ์, null ถ้าแปลงไม่ได้ (ให้โชว์ข้อความดิบแทน) */
 export function answerToTex(raw: string): string | null {
   const clean = cleanAnswer(raw)
   if (!clean) return ''
-  const parts = clean.split(/(>=|<=|!=|=|>|<)/)
+  const parts = clean.split(/(>=|<=|!=|=|>|<|:)/)
   const out: string[] = []
   for (const part of parts) {
     if (REL_TEX[part]) {
@@ -308,11 +399,11 @@ export function answerToTex(raw: string): string | null {
   return out.join(' ')
 }
 
-/** ค่าตัวเลขของคำตอบ (ใช้วิเคราะห์ข้อผิดพลาด) — คืน null ถ้าไม่ใช่ตัวเลขล้วน เช่น มีตัวแปร/สมการ */
+/** ค่าตัวเลขของคำตอบ (ใช้วิเคราะห์ข้อผิดพลาด) — คืน null ถ้าไม่ใช่ตัวเลขล้วน เช่น มีตัวแปร/สมการ/อัตราส่วน */
 export function numericValue(raw: string): number | null {
   try {
     const e = toExpr(cleanAnswer(raw))
-    if (!e || /[=<>!]/.test(e)) return null
+    if (!e || /[=<>!:]/.test(e)) return null
     if (/[a-z]/.test(e.replace(/sqrt|cbrt|pi/g, ''))) return null
     const v = toNum(math.evaluate(e))
     return Number.isFinite(v) ? v : null
