@@ -17,7 +17,6 @@ import {
   getSetDay,
   classifyWrongAnswer,
   type ErrorType,
-  type StudentStat,
   type SetResult,
 } from '@/lib/statsAnalytics'
 
@@ -36,7 +35,7 @@ async function fetchAll(table: string, columns = '*', orderBy = 'id', filter?: (
     const { data, error } = await q.range(from, from + pageSize - 1)
     if (error) {
       if (useOrder) {
-        useOrder = false // บางตารางอาจไม่มีคอลัมน์ id → ลองใหม่แบบไม่เรียง
+        useOrder = false
         out.length = 0
         from = 0
         continue
@@ -65,7 +64,7 @@ const toneText = (p: number | null) =>
 
 function downloadCsv(filename: string, rows: (string | number)[][]) {
   const esc = (v: string | number) => `"${String(v ?? '').replace(/"/g, '""')}"`
-  const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n') // BOM ให้ Excel อ่านภาษาไทยถูก
+  const csv = '\uFEFF' + rows.map((r) => r.map(esc).join(',')).join('\r\n')
   const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8;' }))
   const a = document.createElement('a')
   a.href = url
@@ -129,7 +128,6 @@ function Card({ title, subtitle, right, children }: { title: string; subtitle?: 
   )
 }
 
-// ป้ายบอก "ลองกี่ครั้งถึงถูก" และ "ดูเฉลยหรือไม่" ของคำตอบหนึ่งข้อ
 function AttemptChips({ sub }: { sub: any }) {
   if (!sub) return null
   const att = Number(sub.attempts) || 0
@@ -151,7 +149,7 @@ function AttemptChips({ sub }: { sub: any }) {
   )
 }
 
-type Tab = 'overview' | 'attention' | 'sets' | 'student'
+type Tab = 'overview' | 'attention' | 'sets' | 'student' | 'quests'
 
 export default function AdminStatsPage() {
   const router = useRouter()
@@ -165,6 +163,7 @@ export default function AdminStatsPage() {
   const [completions, setCompletions] = useState<any[]>([])
   const [allSubmissions, setAllSubmissions] = useState<any[]>([])
   const [quests, setQuests] = useState<any[]>([])
+  const [questCompletions, setQuestCompletions] = useState<any[]>([])
 
   // ตัวกรองรวม
   const [tab, setTab] = useState<Tab>('overview')
@@ -186,6 +185,11 @@ export default function AdminStatsPage() {
   const [selectedStudentId, setSelectedStudentId] = useState('')
   const [expandedSetId, setExpandedSetId] = useState('')
 
+  // แท็บ "ภารกิจพิเศษ" (แยกจากแบบฝึกหัดปกติ)
+  const [selectedQuestId, setSelectedQuestId] = useState('')
+  const [questStudentSearch, setQuestStudentSearch] = useState('')
+  const [questStatusFilter, setQuestStatusFilter] = useState<'all' | 'done' | 'in_progress' | 'not_started'>('all')
+
   // ---------- โหลดข้อมูล ----------
   useEffect(() => {
     const storedUser = localStorage.getItem('kidscoddy_user')
@@ -198,7 +202,6 @@ export default function AdminStatsPage() {
       router.push('/dashboard')
       return
     }
-    // วันนี้ (เวลาท้องถิ่น) + ช่วงวันที่เริ่มต้น 30 วันล่าสุด — ตั้งใน effect ป้องกัน Error ตอน prerender
     const t = toLocalDateStr(new Date())
     setTodayStr(t)
     setDateTo(t)
@@ -210,20 +213,27 @@ export default function AdminStatsPage() {
     setLoading(true)
     setError('')
     try {
-      const [setsData, probsData, studentsData, compData, subsData, questData] = await Promise.all([
+      const [setsData, probsData, studentsData, compData, subsData, questData, questCompData] = await Promise.all([
         fetchAll('problem_sets'),
         fetchAll('problems', 'id, set_id, question_text, correct_answer, order_num'),
         fetchAll('users', '*', 'id', (q) => q.eq('role', 'student')),
         fetchAll('set_completions'),
         fetchAll('submissions'),
-        fetchAll('special_quests', 'id, target_set_id').catch(() => []),
+        fetchAll('special_quests').catch(() => []),
+        fetchAll('quest_completions').catch(() => []),
       ])
       setProblemSets(setsData)
       setAllProblems(probsData)
       setStudents([...studentsData].sort((a, b) => String(a.display_name || '').localeCompare(String(b.display_name || ''), 'th')))
       setCompletions(compData)
       setAllSubmissions(subsData)
-      setQuests(questData)
+      // เรียงภารกิจพิเศษ: ที่เปิดใช้งาน (is_active) ขึ้นก่อน ตามด้วยวันที่สร้างล่าสุด
+      const sortedQuests = [...questData].sort((a, b) => {
+        if ((b.is_active ? 1 : 0) !== (a.is_active ? 1 : 0)) return (b.is_active ? 1 : 0) - (a.is_active ? 1 : 0)
+        return new Date(b.created_at || 0).getTime() - new Date(a.created_at || 0).getTime()
+      })
+      setQuests(sortedQuests)
+      setQuestCompletions(questCompData)
       setLastLoaded(new Date().toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }))
     } catch (err: any) {
       console.error('Error fetching admin stats:', err)
@@ -317,7 +327,6 @@ export default function AdminStatsPage() {
     }
   }, [analytics, gradeStudents])
 
-  // ชุดที่เลือกได้ในแท็บ "รายชุด"
   const selectableSets = useMemo(() => {
     if (!analytics) return []
     const q = setSearch.trim().toLowerCase()
@@ -341,6 +350,143 @@ export default function AdminStatsPage() {
       setSelectedStudentId(gradeStudents[0].id)
     }
   }, [gradeStudents, selectedStudentId])
+
+  useEffect(() => {
+    if (quests.length > 0 && !quests.some((q) => q.id === selectedQuestId)) {
+      setSelectedQuestId(quests[0].id)
+    }
+  }, [quests, selectedQuestId])
+
+  // =====================================================================
+  // 🎯 คำนวณข้อมูลวิเคราะห์เฉพาะ "ภารกิจพิเศษ" (Special Quests Analytics)
+  // =====================================================================
+  const questAnalytics = useMemo(() => {
+    const gradeStudentIds = new Set(gradeStudents.map((s) => s.id))
+
+    const questList = quests.map((q) => {
+      const targetSet = setById.get(q.target_set_id)
+      const probs = allProblems
+        .filter((p) => p.set_id === q.target_set_id)
+        .sort((a, b) => (a.order_num || 0) - (b.order_num || 0))
+      const probIds = new Set(probs.map((p) => p.id))
+
+      // กรองนักเรียนที่มีสิทธิ์ในภารกิจนี้ (อิงกลุ่มของชุดโจทย์ปลายทาง)
+      const eligibleStudents = gradeStudents.filter((st) =>
+        targetSet ? matchesGroup(targetSet.target_group, st.group_name) : true
+      )
+      const eligibleIds = new Set(eligibleStudents.map((s) => s.id))
+
+      // ประวัติการพิชิตภารกิจนี้จากตาราง quest_completions
+      const qComps = questCompletions.filter(
+        (qc) => qc.quest_id === q.id && eligibleIds.has(qc.user_id)
+      )
+      const compByUser = new Map(qComps.map((qc) => [qc.user_id, qc]))
+
+      // วิเคราะห์รายละเอียดนักเรียนแต่ละคนในเควสนี้
+      const studentRows = eligibleStudents.map((st) => {
+        const qc = compByUser.get(st.id)
+        const subs = allSubmissions.filter(
+          (s) => s.user_id === st.id && probIds.has(s.problem_id)
+        )
+        const answered = subs.length
+        const correct = subs.filter((s) => s.is_correct).length
+        const firstTry = subs.filter((s) => s.is_correct && Number(s.attempts_to_correct) === 1).length
+        const assisted = subs.filter((s) => s.is_correct && s.viewed_solution_before_correct).length
+        const totalAttempts = subs.reduce((sum, s) => sum + (Number(s.attempts) || 1), 0)
+        const avgAttempts = answered > 0 ? totalAttempts / answered : null
+
+        const isCompleted = !!qc || (probs.length > 0 && correct > 0 && answered >= probs.length)
+        const isPerfect = probs.length > 0 && correct >= probs.length
+        const status: 'done' | 'in_progress' | 'not_started' = isCompleted
+          ? 'done'
+          : answered > 0
+          ? 'in_progress'
+          : 'not_started'
+
+        return {
+          student: st,
+          status,
+          isCompleted,
+          isPerfect,
+          completedAt: qc?.completed_at || null,
+          answered,
+          correct,
+          total: probs.length,
+          pct: probs.length > 0 ? correct / probs.length : 0,
+          firstTry,
+          assisted,
+          avgAttempts,
+          coinsEarned: isCompleted ? correct + (Number(q.reward_coins) || 0) : correct,
+        }
+      })
+
+      // วิเคราะห์ความยากง่ายรายข้อเฉพาะในภารกิจพิเศษนี้
+      const problemStats = probs.map((p) => {
+        const subsForP = allSubmissions.filter(
+          (s) => s.problem_id === p.id && gradeStudentIds.has(s.user_id)
+        )
+        const ansCount = subsForP.length
+        const corrCount = subsForP.filter((s) => s.is_correct).length
+        const firstTryCount = subsForP.filter((s) => s.is_correct && Number(s.attempts_to_correct) === 1).length
+        const assistedCount = subsForP.filter((s) => s.is_correct && s.viewed_solution_before_correct).length
+        const avgAtt = ansCount > 0 ? subsForP.reduce((sum, s) => sum + (Number(s.attempts) || 1), 0) / ansCount : null
+
+        return {
+          problem: p,
+          answered: ansCount,
+          correct: corrCount,
+          pct: ansCount > 0 ? corrCount / ansCount : null,
+          firstTryRate: corrCount > 0 ? firstTryCount / corrCount : null,
+          assistedCount,
+          avgAttempts: avgAtt,
+        }
+      })
+
+      const doneCount = studentRows.filter((r) => r.status === 'done').length
+      const inProgressCount = studentRows.filter((r) => r.status === 'in_progress').length
+      const perfectCount = studentRows.filter((r) => r.isPerfect).length
+      const completionRate = eligibleStudents.length > 0 ? doneCount / eligibleStudents.length : null
+
+      return {
+        quest: q,
+        targetSet,
+        probs,
+        eligibleCount: eligibleStudents.length,
+        doneCount,
+        inProgressCount,
+        notStartedCount: eligibleStudents.length - doneCount - inProgressCount,
+        perfectCount,
+        completionRate,
+        studentRows,
+        problemStats,
+      }
+    })
+
+    const activeQuests = questList.filter((item) => item.quest.is_active)
+    const totalEligibleSlots = activeQuests.reduce((sum, item) => sum + item.eligibleCount, 0)
+    const totalDoneSlots = activeQuests.reduce((sum, item) => sum + item.doneCount, 0)
+    const overallCompletionRate = totalEligibleSlots > 0 ? totalDoneSlots / totalEligibleSlots : null
+
+    // นับจำนวนนักเรียนที่พิชิตครบทุกภารกิจที่เปิดใช้งานอยู่
+    const allQuestChampions = gradeStudents.filter((st) => {
+      const myEligibleQuests = activeQuests.filter((qItem) =>
+        qItem.studentRows.some((sr) => sr.student.id === st.id)
+      )
+      if (myEligibleQuests.length === 0) return false
+      return myEligibleQuests.every((qItem) =>
+        qItem.studentRows.find((sr) => sr.student.id === st.id)?.isCompleted
+      )
+    }).length
+
+    return {
+      questList,
+      activeCount: activeQuests.length,
+      overallCompletionRate,
+      totalDoneSlots,
+      totalEligibleSlots,
+      allQuestChampions,
+    }
+  }, [quests, questCompletions, gradeStudents, setById, allProblems, allSubmissions])
 
   const openProfile = (studentId: string, setId = '') => {
     setSelectedStudentId(studentId)
@@ -449,13 +595,51 @@ export default function AdminStatsPage() {
     downloadCsv(`kidscoddy_รายงาน_${profileStudent.display_name}.csv`, rows)
   }
 
+  // ข้อมูลภารกิจพิเศษที่กำลังเลือกดู
+  const currentQuestData = questAnalytics.questList.find((q) => q.quest.id === selectedQuestId)
+  const filteredQuestStudentRows = currentQuestData
+    ? currentQuestData.studentRows
+        .filter((r) => {
+          const q = questStudentSearch.trim().toLowerCase()
+          const matchName = !q || String(r.student.display_name || '').toLowerCase().includes(q) || String(r.student.username || '').toLowerCase().includes(q)
+          const matchStatus = questStatusFilter === 'all' || r.status === questStatusFilter
+          return matchName && matchStatus
+        })
+        .sort((a, b) => {
+          const order = { done: 0, in_progress: 1, not_started: 2 }
+          if (order[a.status] !== order[b.status]) return order[a.status] - order[b.status]
+          return b.correct - a.correct
+        })
+    : []
+
+  const exportQuestCsv = () => {
+    if (!currentQuestData) return
+    const statusMap = { done: 'พิชิตแล้ว', in_progress: 'กำลังทำ', not_started: 'ยังไม่เริ่ม' }
+    const rows: (string | number)[][] = [['ชื่อนักเรียน', 'กลุ่ม', 'สถานะภารกิจ', 'คะแนนที่ทำได้', 'จำนวนข้อทั้งหมด', 'คอยน์รวมที่ได้', 'ถูกรอบแรก(ข้อ)', 'ถูกหลังดูเฉลย(ข้อ)', 'เวลาที่พิชิตสำเร็จ']]
+    filteredQuestStudentRows.forEach((r) => {
+      rows.push([
+        r.student.display_name || '',
+        r.student.group_name || 'ทั่วไป',
+        statusMap[r.status],
+        r.correct,
+        r.total,
+        r.coinsEarned,
+        r.firstTry,
+        r.assisted,
+        r.completedAt ? new Date(r.completedAt).toLocaleString('th-TH') : '-',
+      ])
+    })
+    downloadCsv(`kidscoddy_ภารกิจพิเศษ_${String(currentQuestData.quest.title || '').slice(0, 25)}.csv`, rows)
+  }
+
   const recentDays = analytics.dayStats.slice(-14)
   const maxErr = Math.max(1, ...Object.values(analytics.errorTotals))
-  const tabs: { key: Tab; label: string; badge?: number }[] = [
-    { key: 'overview', label: '📊 ภาพรวม' },
-    { key: 'attention', label: '🚨 ควรดูแล', badge: overview.attention },
+  const tabs: { key: Tab; label: string; badge?: number; badgeColor?: string }[] = [
+    { key: 'overview', label: '📊 ภาพรวมแบบฝึกหัด' },
+    { key: 'attention', label: '🚨 ควรดูแล', badge: overview.attention, badgeColor: 'bg-rose-500 text-white' },
     { key: 'sets', label: '📋 รายชุดโจทย์' },
     { key: 'student', label: '👤 รายบุคคล' },
+    { key: 'quests', label: '🎯 ภารกิจพิเศษ', badge: questAnalytics.activeCount, badgeColor: 'bg-pink-500 text-white' },
   ]
 
   return (
@@ -477,7 +661,7 @@ export default function AdminStatsPage() {
               {loading ? '⏳ กำลังโหลด...' : '🔄 รีเฟรชข้อมูล'}
             </button>
             <button onClick={exportAllStudents} className="px-3.5 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-extrabold rounded-xl transition cursor-pointer">⬇️ ส่งออก CSV</button>
-            <button onClick={() => router.push('/admin/users')} className="px-3.5 py-2 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-extrabold rounded-xl transition cursor-pointer">👥 จัดการนักเรียน</button>
+            <button onClick={() => router.push('/admin/quests')} className="px-3.5 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-extrabold rounded-xl transition cursor-pointer">🎯 จัดการเควส</button>
             <button onClick={() => router.push('/admin/exercises')} className="px-3.5 py-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-extrabold rounded-xl transition cursor-pointer">📚 จัดการชุดข้อสอบ</button>
             <button onClick={() => router.push('/dashboard')} className="px-3.5 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-extrabold rounded-xl transition cursor-pointer">🏠 กลับหน้าหลัก</button>
           </div>
@@ -494,25 +678,44 @@ export default function AdminStatsPage() {
                 {g === 'ALL' ? 'ทุกระดับชั้น' : g}
               </button>
             ))}
-            <span className="ml-auto text-xs font-bold text-gray-500">นักเรียน {gradeStudents.length} คน • ชุดโจทย์ในช่วงนี้ {analytics.sets.length} ชุด</span>
+            <span className="ml-auto text-xs font-bold text-gray-500">
+              นักเรียน {gradeStudents.length} คน • {tab === 'quests' ? `ภารกิจพิเศษ ${quests.length} เควส` : `แบบฝึกหัดปกติ ${analytics.sets.length} ชุด`}
+            </span>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="text-xs font-extrabold text-gray-600 mr-1">📅 วันของการบ้าน:</span>
-            <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer" />
-            <span className="text-xs text-gray-400 font-bold">ถึง</span>
-            <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer" />
-            {([['today', 'วันนี้'], ['7', '7 วัน'], ['30', '30 วัน'], ['90', '90 วัน'], ['all', 'ทั้งหมด']] as const).map(([k, label]) => (
-              <button key={k} onClick={() => setQuickRange(k)} className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer">{label}</button>
-            ))}
-          </div>
+
+          {tab !== 'quests' && (
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-xs font-extrabold text-gray-600 mr-1">📅 วันของการบ้าน:</span>
+              <input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer" />
+              <span className="text-xs text-gray-400 font-bold">ถึง</span>
+              <input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 outline-none focus:ring-2 focus:ring-emerald-400 cursor-pointer" />
+              {([['today', 'วันนี้'], ['7', '7 วัน'], ['30', '30 วัน'], ['90', '90 วัน'], ['all', 'ทั้งหมด']] as const).map(([k, label]) => (
+                <button key={k} onClick={() => setQuickRange(k)} className="px-3 py-1.5 rounded-xl text-xs font-extrabold bg-emerald-50 hover:bg-emerald-100 text-emerald-700 border border-emerald-200 transition cursor-pointer">{label}</button>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* แท็บ */}
         <div className="flex flex-wrap gap-1.5 bg-white/90 p-1.5 rounded-2xl border border-indigo-100 shadow-xs w-fit print:hidden">
           {tabs.map((t) => (
-            <button key={t.key} onClick={() => setTab(t.key)} className={`px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${tab === t.key ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm' : 'text-gray-600 hover:bg-gray-100'}`}>
+            <button
+              key={t.key}
+              onClick={() => setTab(t.key)}
+              className={`px-4 py-2 rounded-xl text-xs font-black transition cursor-pointer flex items-center gap-1.5 ${
+                tab === t.key
+                  ? t.key === 'quests'
+                    ? 'bg-gradient-to-r from-rose-500 to-pink-600 text-white shadow-sm'
+                    : 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
               {t.label}
-              {!!t.badge && <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${tab === t.key ? 'bg-white/25' : 'bg-rose-500 text-white'}`}>{t.badge}</span>}
+              {!!t.badge && (
+                <span className={`px-1.5 py-0.5 rounded-full text-[10px] ${tab === t.key ? 'bg-white/25 text-white' : t.badgeColor || 'bg-rose-500 text-white'}`}>
+                  {t.badge}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -523,15 +726,14 @@ export default function AdminStatsPage() {
             <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
               <Kpi icon="👥" label="นักเรียน" value={String(gradeStudents.length)} sub={selectedGrade === 'ALL' ? 'ทุกระดับชั้น' : selectedGrade} />
               <Kpi icon="📅" label="ทำการบ้านวันนี้ครบ" value={overview.todayStudents ? `${overview.todayDone}/${overview.todayStudents}` : '–'} sub={overview.todayStudents ? 'คนที่มีการบ้านวันนี้' : 'วันนี้ไม่มีการบ้าน'} color="emerald" />
-              <Kpi icon="📨" label="อัตราส่งงาน" value={pctText(overview.submitRate)} sub="ในช่วงวันที่เลือก" color="indigo" />
+              <Kpi icon="📨" label="อัตราส่งงาน" value={pctText(overview.submitRate)} sub="เฉพาะแบบฝึกหัดปกติ" color="indigo" />
               <Kpi icon="🎯" label="ความแม่นยำเฉลี่ย" value={pctText(overview.accuracy)} sub="ข้อที่ตอบถูก/ตอบทั้งหมด" color="purple" />
               <Kpi icon="🚨" label="ควรดูแล" value={String(overview.attention)} sub={`เฝ้าระวังอีก ${overview.watch} คน`} color="rose" />
               <Kpi icon="🌟" label="ผลงานเยี่ยม" value={String(overview.stars)} sub="ควรชื่นชม" color="amber" />
             </div>
 
-            {/* คุณภาพการเรียนรู้: ถูกตั้งแต่ครั้งแรก / ลองกี่ครั้ง / พึ่งเฉลย */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-              <Kpi icon="⚡" label="ถูกตั้งแต่ครั้งแรก" value={pctText(overview.firstTryRate)} sub={overview.trackedTotal ? `จากข้อที่ถูกและมีข้อมูล ${overview.trackedTotal} ข้อ` : 'ยังไม่มีข้อมูล (เริ่มบันทึกหลังอัปเดตระบบ)'} color="emerald" />
+              <Kpi icon="⚡" label="ถูกตั้งแต่ครั้งแรก" value={pctText(overview.firstTryRate)} sub={overview.trackedTotal ? `จากข้อที่ถูกและมีข้อมูล ${overview.trackedTotal} ข้อ` : 'ยังไม่มีข้อมูล'} color="emerald" />
               <Kpi icon="🔄" label="ลองเฉลี่ยกว่าจะถูก" value={overview.avgAttempts === null ? '–' : `${overview.avgAttempts.toFixed(1)} ครั้ง`} sub="ต่อข้อ (1.0 = ถูกทันทีทุกข้อ)" color="indigo" />
               <Kpi icon="📖" label="ถูกหลังดูเฉลย" value={pctText(overview.assistedRate)} sub={`${overview.assistedCorrect} ข้อ จากข้อที่ถูกทั้งหมด`} color="rose" />
             </div>
@@ -590,7 +792,7 @@ export default function AdminStatsPage() {
               )}
             </Card>
 
-            <Card title="🔁 ข้อที่เด็กต้องลองหลายครั้ง / ดูเฉลยบ่อย" subtitle="ข้อที่กว่าจะถูกต้องลองหลายรอบ หรือมีคนกดดูวิธีทำก่อนตอบถูก — มักเป็นข้อที่ยากหรืออธิบายไม่ชัด (ต้องมีข้อมูลอย่างน้อย 3 คน)">
+            <Card title="🔁 ข้อที่เด็กต้องลองหลายครั้ง / ดูเฉลยบ่อย" subtitle="ข้อที่กว่าจะถูกต้องลองหลายรอบ หรือมีคนกดดูวิธีทำก่อนตอบถูก (ต้องมีข้อมูลอย่างน้อย 3 คน)">
               {overview.retryProblems.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-6">ยังไม่พบข้อที่มีสัญญาณผิดปกติ (หรือข้อมูลยังไม่พอ)</p>
               ) : (
@@ -617,7 +819,7 @@ export default function AdminStatsPage() {
               )}
             </Card>
 
-            <Card title="📉 ข้อที่เด็กผิดบ่อยที่สุด" subtitle="ข้อที่ควรสอนซ้ำ (ต้องมีคนตอบอย่างน้อย 3 คน) — ดูคำตอบผิดที่พบบ่อยเพื่อเดาว่าเด็กเข้าใจผิดตรงไหน">
+            <Card title="📉 ข้อที่เด็กผิดบ่อยที่สุด" subtitle="ข้อที่ควรสอนซ้ำ (ต้องมีคนตอบอย่างน้อย 3 คน)">
               {overview.topWrong.length === 0 ? (
                 <p className="text-sm text-gray-400 text-center py-6">ยังไม่มีข้อมูลเพียงพอ</p>
               ) : (
@@ -655,7 +857,7 @@ export default function AdminStatsPage() {
         {tab === 'attention' && (
           <Card
             title="🚨 รายชื่อนักเรียนที่ควรติดตาม"
-            subtitle="ระบบคำนวณจากงานค้าง ความแม่นยำ แนวโน้ม 3 ชุดล่าสุด และจำนวนวันที่หายไป"
+            subtitle="ระบบคำนวณจากงานค้าง ความแม่นยำ แนวโน้ม 3 ชุดล่าสุด และจำนวนวันที่หายไป (เฉพาะแบบฝึกหัดปกติ)"
             right={
               <div className="flex flex-wrap gap-1.5">
                 {([['all', 'ทั้งหมด'], ['attention', '🔴 ควรดูแล'], ['watch', '🟠 เฝ้าระวัง'], ['star', '🌟 ผลงานเยี่ยม']] as const).map(([k, label]) => (
@@ -703,7 +905,7 @@ export default function AdminStatsPage() {
         {/* ===================== รายชุด ===================== */}
         {tab === 'sets' && (
           <div className="space-y-6">
-            <Card title="🎯 เลือกชุดแบบฝึกหัด" subtitle={`พบ ${selectableSets.length} ชุด ในช่วงวันที่และระดับชั้นที่เลือก`}>
+            <Card title="🎯 เลือกชุดแบบฝึกหัด (ไม่รวมภารกิจพิเศษ)" subtitle={`พบ ${selectableSets.length} ชุด ในช่วงวันที่และระดับชั้นที่เลือก`}>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                 <input type="text" placeholder="🔍 ค้นหาชื่อชุดโจทย์..." value={setSearch} onChange={(e) => setSetSearch(e.target.value)} className="px-4 py-2.5 rounded-2xl border border-gray-200 focus:ring-2 focus:ring-emerald-500 outline-none text-sm font-semibold text-gray-700" />
                 <div className="md:col-span-2 flex gap-2">
@@ -957,6 +1159,294 @@ export default function AdminStatsPage() {
               </>
             ) : (
               <Card title="ไม่พบนักเรียน"><p className="text-sm text-gray-400 text-center py-6">เลือกนักเรียนจากรายการด้านบน</p></Card>
+            )}
+          </div>
+        )}
+
+        {/* ===================== 🎯 แท็บที่ 5: วิเคราะห์ภารกิจพิเศษ (แยกส่วนอิสระ) ===================== */}
+        {tab === 'quests' && (
+          <div className="space-y-6">
+            {/* KPI สรุปภาพรวมภารกิจพิเศษ */}
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <Kpi
+                icon="🎯"
+                label="ภารกิจพิเศษทั้งหมด"
+                value={String(quests.length)}
+                sub={`กำลังเปิดใช้งาน ${questAnalytics.activeCount} เควส`}
+                color="rose"
+              />
+              <Kpi
+                icon="🔥"
+                label="อัตราการพิชิตเควส"
+                value={pctText(questAnalytics.overallCompletionRate)}
+                sub={`${questAnalytics.totalDoneSlots}/${questAnalytics.totalEligibleSlots} ครั้งที่สำเร็จ`}
+                color="purple"
+              />
+              <Kpi
+                icon="👑"
+                label="พิชิตครบทุกเควส"
+                value={`${questAnalytics.allQuestChampions} คน`}
+                sub={`จากนักเรียน ${gradeStudents.length} คน`}
+                color="amber"
+              />
+              <Kpi
+                icon="🪙"
+                label="รางวัลของเควสที่เลือก"
+                value={currentQuestData ? `+${currentQuestData.quest.reward_coins || 0} 🪙` : '–'}
+                sub={currentQuestData ? `และ +${currentQuestData.quest.reward_xp || 0} XP` : ''}
+                color="emerald"
+              />
+            </div>
+
+            {questAnalytics.questList.length === 0 ? (
+              <Card title="ยังไม่มีภารกิจพิเศษในระบบ">
+                <p className="text-sm text-gray-400 text-center py-8">คุณครูสามารถสร้างภารกิจพิเศษได้ที่เมนู "🎯 จัดการเควส"</p>
+              </Card>
+            ) : (
+              <>
+                {/* แถบเลือกภารกิจพิเศษที่ต้องการวิเคราะห์ */}
+                <Card
+                  title="⚔️ เลือกภารกิจพิเศษที่ต้องการวิเคราะห์"
+                  subtitle="แยกข้อมูลออกจากแบบฝึกหัดรายวัน 100% เพื่อดูความสนใจและความสำเร็จของเด็กในกิจกรรมท้าทาย"
+                >
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                    {questAnalytics.questList.map((qItem) => {
+                      const isSelected = qItem.quest.id === selectedQuestId
+                      return (
+                        <button
+                          key={qItem.quest.id}
+                          onClick={() => setSelectedQuestId(qItem.quest.id)}
+                          className={`text-left p-4 rounded-2xl border transition cursor-pointer flex flex-col justify-between gap-2 ${
+                            isSelected
+                              ? 'border-rose-400 bg-rose-50/70 ring-2 ring-rose-200 shadow-sm'
+                              : 'border-gray-100 bg-gray-50/50 hover:border-rose-200 hover:bg-white'
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                              <span
+                                className={`px-2 py-0.5 rounded-full text-[10px] font-black ${
+                                  qItem.quest.is_active
+                                    ? 'bg-emerald-100 text-emerald-800'
+                                    : 'bg-gray-200 text-gray-600'
+                                }`}
+                              >
+                                {qItem.quest.is_active ? '🟢 เปิดใช้งาน' : '⚪ ปิดแล้ว'}
+                              </span>
+                              <span className="text-[11px] font-extrabold text-amber-700">
+                                +{qItem.quest.reward_coins} 🪙 • +{qItem.quest.reward_xp} XP
+                              </span>
+                            </div>
+                            <h4 className="font-black text-gray-800 text-sm line-clamp-1">{qItem.quest.title}</h4>
+                            <p className="text-[11px] text-gray-500 mt-0.5">
+                              กลุ่มเป้าหมาย: {qItem.targetSet?.target_group || 'ทั่วไป'} ({qItem.probs.length} ข้อ)
+                            </p>
+                          </div>
+
+                          <div className="pt-2 border-t border-gray-200/60 flex items-center justify-between text-xs font-extrabold">
+                            <span className="text-rose-700">
+                              พิชิตแล้ว {qItem.doneCount}/{qItem.eligibleCount} คน
+                            </span>
+                            <span className={toneText(qItem.completionRate)}>
+                              {pctText(qItem.completionRate)}
+                            </span>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </Card>
+
+                {/* รายละเอียดเชิงลึกของภารกิจพิเศษที่เลือก */}
+                {currentQuestData && (
+                  <>
+                    {/* วิเคราะห์รายข้อเฉพาะในภารกิจพิเศษนี้ */}
+                    <Card
+                      title={`🔬 วิเคราะห์ความท้าทายรายข้อ: ${currentQuestData.quest.title}`}
+                      subtitle={`ชุดโจทย์: ${currentQuestData.targetSet?.title || '-'} • พิชิตเต็ม 100% จำนวน ${currentQuestData.perfectCount} คน`}
+                    >
+                      {currentQuestData.problemStats.length === 0 ? (
+                        <p className="text-sm text-gray-400 text-center py-6">ไม่พบข้อสอบในภารกิจนี้</p>
+                      ) : (
+                        <div className="grid md:grid-cols-2 gap-3">
+                          {currentQuestData.problemStats.map((ps) => (
+                            <div key={ps.problem.id} className="p-3.5 rounded-2xl border border-rose-100 bg-rose-50/15 space-y-2">
+                              <div className="text-sm font-extrabold text-gray-800">
+                                <span className="text-rose-600 mr-1.5">ข้อ {ps.problem.order_num}.</span>
+                                <MathText text={ps.problem.question_text} />
+                              </div>
+
+                              <div className="flex items-center gap-3">
+                                <div className="flex-1 h-2 bg-gray-100 rounded-full overflow-hidden">
+                                  <div className={`h-full ${tone(ps.pct)}`} style={{ width: `${(ps.pct ?? 0) * 100}%` }} />
+                                </div>
+                                <span className={`text-xs font-black ${toneText(ps.pct)}`}>
+                                  {ps.answered > 0 ? `ผ่าน ${pctText(ps.pct)} (${ps.correct}/${ps.answered})` : 'ยังไม่มีคนตอบ'}
+                                </span>
+                              </div>
+
+                              {ps.answered > 0 && (
+                                <div className="flex flex-wrap gap-1.5 text-[11px] font-extrabold">
+                                  <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
+                                    ⚡ ถูกรอบแรก {pctText(ps.firstTryRate)}
+                                  </span>
+                                  <span className="px-2 py-0.5 rounded-md bg-indigo-50 text-indigo-700">
+                                    🔄 ลองเฉลี่ย {ps.avgAttempts?.toFixed(1)} ครั้ง
+                                  </span>
+                                  {ps.assistedCount > 0 && (
+                                    <span className="px-2 py-0.5 rounded-md bg-rose-100 text-rose-700">
+                                      📖 ดูเฉลยก่อนถูก {ps.assistedCount} คน
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </Card>
+
+                    {/* ตารางรายชื่อผู้พิชิตภารกิจพิเศษ */}
+                    <Card
+                      title={`🏆 สถานะการพิชิตภารกิจของนักเรียน (${filteredQuestStudentRows.length} คน)`}
+                      subtitle={`พิชิตสำเร็จ ${currentQuestData.doneCount} คน • กำลังทำ ${currentQuestData.inProgressCount} คน • ยังไม่เริ่ม ${currentQuestData.notStartedCount} คน`}
+                      right={
+                        <div className="flex flex-wrap gap-2">
+                          <input
+                            type="text"
+                            placeholder="🔍 ค้นหาชื่อนักเรียน..."
+                            value={questStudentSearch}
+                            onChange={(e) => setQuestStudentSearch(e.target.value)}
+                            className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-semibold outline-none focus:ring-2 focus:ring-rose-400"
+                          />
+                          <select
+                            value={questStatusFilter}
+                            onChange={(e) => setQuestStatusFilter(e.target.value as any)}
+                            className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-bold text-gray-700 cursor-pointer"
+                          >
+                            <option value="all">สถานะ: ทั้งหมด</option>
+                            <option value="done">✅ พิชิตสำเร็จแล้ว</option>
+                            <option value="in_progress">⏳ กำลังทำค้างอยู่</option>
+                            <option value="not_started">⚪ ยังไม่เริ่มทำ</option>
+                          </select>
+                          <button
+                            onClick={exportQuestCsv}
+                            className="px-3 py-2 bg-sky-50 hover:bg-sky-100 text-sky-700 text-xs font-extrabold rounded-xl cursor-pointer"
+                          >
+                            ⬇️ CSV เควสนี้
+                          </button>
+                        </div>
+                      }
+                    >
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-left border-collapse">
+                          <thead>
+                            <tr className="border-b border-gray-100 text-xs text-gray-400 font-extrabold">
+                              <th className="py-3 px-3">นักเรียน</th>
+                              <th className="py-3 px-3">กลุ่ม</th>
+                              <th className="py-3 px-3">สถานะภารกิจ</th>
+                              <th className="py-3 px-3">คะแนนทำได้</th>
+                              <th className="py-3 px-3">คอยน์รวมที่ได้รับ</th>
+                              <th className="py-3 px-3">พฤติกรรมการตอบ</th>
+                              <th className="py-3 px-3 text-right">วันที่พิชิต</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y divide-gray-50 text-sm font-semibold text-gray-700">
+                            {filteredQuestStudentRows.map((r) => (
+                              <tr key={r.student.id} className="hover:bg-rose-50/30 transition">
+                                <td className="py-3 px-3 font-extrabold text-gray-800">
+                                  <div className="flex items-center gap-2.5">
+                                    <AvatarDisplay user={r.student} size="sm" showLevel={false} />
+                                    <div>
+                                      {r.student.display_name}
+                                      <span className="block text-xs font-normal text-gray-400 font-mono">
+                                        @{r.student.username}
+                                      </span>
+                                    </div>
+                                  </div>
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  <span className="px-2.5 py-1 bg-indigo-50 text-indigo-700 text-xs font-extrabold rounded-lg">
+                                    {r.student.group_name || 'ทั่วไป'}
+                                  </span>
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  {r.status === 'done' ? (
+                                    <span className="px-3 py-1 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-full">
+                                      {r.isPerfect ? '👑 พิชิตเต็ม 100%' : '✅ พิชิตสำเร็จ'}
+                                    </span>
+                                  ) : r.status === 'in_progress' ? (
+                                    <span className="px-3 py-1 bg-amber-100 text-amber-800 text-xs font-extrabold rounded-full">
+                                      ⏳ ทำค้าง ({r.answered}/{r.total})
+                                    </span>
+                                  ) : (
+                                    <span className="px-3 py-1 bg-gray-100 text-gray-500 text-xs font-extrabold rounded-full">
+                                      ยังไม่เข้าร่วม
+                                    </span>
+                                  )}
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  {r.answered > 0 ? (
+                                    <span className={`font-black ${toneText(r.pct)}`}>
+                                      {r.correct} / {r.total} ข้อ
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">–</span>
+                                  )}
+                                </td>
+
+                                <td className="py-3 px-3">
+                                  {r.status === 'done' ? (
+                                    <span className="px-2.5 py-1 bg-amber-50 border border-amber-200 text-amber-800 text-xs font-black rounded-xl">
+                                      +{r.coinsEarned} 🪙
+                                    </span>
+                                  ) : (
+                                    <span className="text-gray-300">–</span>
+                                  )}
+                                </td>
+
+                                <td className="py-3 px-3 text-xs font-extrabold">
+                                  {r.answered > 0 ? (
+                                    <div className="flex flex-wrap gap-1">
+                                      <span className="px-2 py-0.5 rounded-md bg-emerald-50 text-emerald-700">
+                                        ⚡ รอบแรก {r.firstTry} ข้อ
+                                      </span>
+                                      {r.assisted > 0 && (
+                                        <span className="px-2 py-0.5 rounded-md bg-rose-50 text-rose-700">
+                                          📖 ดูเฉลย {r.assisted} ข้อ
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-gray-300">–</span>
+                                  )}
+                                </td>
+
+                                <td className="py-3 px-3 text-right text-xs text-gray-500 font-bold">
+                                  {r.completedAt
+                                    ? new Date(r.completedAt).toLocaleDateString('th-TH', {
+                                        day: 'numeric',
+                                        month: 'short',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                      })
+                                    : '–'}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                        {filteredQuestStudentRows.length === 0 && (
+                          <p className="text-center text-sm text-gray-400 py-8">ไม่พบข้อมูลนักเรียนตามตัวกรองที่เลือก</p>
+                        )}
+                      </div>
+                    </Card>
+                  </>
+                )}
+              </>
             )}
           </div>
         )}
