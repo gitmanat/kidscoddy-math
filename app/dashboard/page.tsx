@@ -855,28 +855,30 @@ export default function StudentDashboard() {
                 return (
                   <div
                     key={set.id}
-                    className={`bg-white/95 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-md border transition-all flex flex-col justify-between group relative overflow-hidden ${
+                    className={`p-6 md:p-8 rounded-3xl border transition-all duration-200 flex flex-col justify-between group relative overflow-hidden ${
                       isPerfect
-                        ? 'border-emerald-200 bg-emerald-50/15'
+                        ? 'bg-gradient-to-br from-emerald-50 via-white to-teal-50 border-2 border-emerald-300 shadow-md'
                         : isInProgress
-                        ? 'border-amber-300 bg-amber-50/15 hover:shadow-xl'
-                        : 'border-indigo-100 hover:shadow-xl'
+                        ? 'bg-gradient-to-br from-amber-500 via-orange-500 to-rose-500 border-transparent shadow-xl shadow-orange-300/60 hover:-translate-y-1 hover:shadow-2xl'
+                        : 'bg-gradient-to-br from-indigo-500 via-purple-500 to-fuchsia-500 border-transparent shadow-xl shadow-indigo-300/60 hover:-translate-y-1 hover:shadow-2xl'
                     }`}
                   >
-                    <div
-                      className={`absolute top-0 left-0 right-0 h-1.5 ${
-                        isPerfect
-                          ? 'bg-emerald-500'
-                          : isInProgress
-                          ? 'bg-gradient-to-r from-amber-400 to-orange-500'
-                          : 'bg-gradient-to-r from-indigo-500 to-purple-500'
-                      }`}
-                    />
+                    {/* ลวดลายตกแต่ง: ชุดที่ยังต้องทำ = พื้นสีสด / ชุดที่เต็มแล้ว = พื้นเขียวอ่อน */}
+                    {isPerfect ? (
+                      <div className="absolute top-0 left-0 right-0 h-1.5 bg-emerald-500 pointer-events-none" />
+                    ) : (
+                      <>
+                        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
+                        <div className="absolute -right-4 -bottom-6 text-9xl opacity-10 select-none pointer-events-none rotate-12">
+                          {isInProgress ? '🔥' : '🚀'}
+                        </div>
+                      </>
+                    )}
 
-                    <div>
+                    <div className="relative z-10">
                       <div className="flex justify-between items-start mb-3 gap-2">
                         <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-3.5 py-1 bg-indigo-50 text-indigo-700 text-xs font-black rounded-full">
+                          <span className="px-3.5 py-1 bg-white/90 text-indigo-700 text-xs font-black rounded-full shadow-sm">
                             {set.target_group || 'ทั่วไป'}
                           </span>
                           {/* โหมดงานค้าง: แสดงวันที่ของการบ้าน กดเพื่อไปดูวันนั้นได้ */}
@@ -896,9 +898,7 @@ export default function StudentDashboard() {
                           className={`flex flex-col items-end px-3.5 py-1.5 rounded-2xl border shrink-0 ${
                             isPerfect
                               ? 'bg-emerald-50 border-emerald-200'
-                              : isInProgress
-                              ? 'bg-amber-50 border-amber-300'
-                              : 'bg-purple-50 border-purple-200'
+                              : 'bg-white/95 border-white shadow-md'
                           }`}
                         >
                           <div
@@ -931,16 +931,20 @@ export default function StudentDashboard() {
                         </div>
                       </div>
 
-                      <h3 className="text-xl font-black text-gray-800 mb-2 group-hover:text-indigo-600 transition">
+                      <h3
+                        className={`text-xl md:text-2xl font-black mb-2 transition ${
+                          isPerfect ? 'text-gray-800 group-hover:text-emerald-700' : 'text-white drop-shadow-sm'
+                        }`}
+                      >
                         {set.title}
                       </h3>
-                      <p className="text-sm text-gray-500 mb-4 line-clamp-2">
+                      <p className={`text-sm mb-4 line-clamp-2 ${isPerfect ? 'text-gray-500' : 'text-white/90'}`}>
                         {set.description || 'ไม่มีคำอธิบายสำหรับชุดโจทย์นี้'}
                       </p>
 
                       {/* 👩‍🏫 เฉพาะแอดมิน: ย้าย/เปลี่ยนวันของการบ้านชุดนี้ */}
                       {isAdmin && (
-                        <div className="mb-4 pt-3 border-t border-dashed border-gray-200">
+                        <div className={`mb-4 p-2.5 rounded-2xl ${isPerfect ? 'bg-white/70 border border-dashed border-emerald-200' : 'bg-white/90'}`}>
                           <AssignDateField
                             compact
                             label="📅 วันของการบ้าน"
@@ -952,16 +956,18 @@ export default function StudentDashboard() {
                     </div>
 
                     {/* 🪙 แทรก Badge แสดงรูปเพื่อนที่ทำแล้วตรงนี้ */}
-                    <CompletedAvatarsBadge completedUsers={completionsBySet[set.id] || []} />
+                    <div className="relative z-10">
+                      <CompletedAvatarsBadge completedUsers={completionsBySet[set.id] || []} />
+                    </div>
 
                     <button
                       onClick={() => router.push(`/practice/${set.id}`)}
-                      className={`w-full py-3.5 font-extrabold rounded-2xl shadow-lg transition transform active:scale-95 cursor-pointer text-center ${
+                      className={`relative z-10 w-full py-3.5 font-extrabold rounded-2xl shadow-lg transition transform active:scale-95 cursor-pointer text-center ${
                         isPerfect
                           ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
                           : isInProgress
-                          ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-amber-200'
-                          : 'bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white shadow-indigo-200'
+                          ? 'bg-white hover:bg-orange-50 text-orange-600 text-base shadow-orange-900/20'
+                          : 'bg-white hover:bg-indigo-50 text-indigo-700 text-base shadow-indigo-900/20'
                       }`}
                     >
                       {isPerfect
