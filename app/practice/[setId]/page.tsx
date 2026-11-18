@@ -166,6 +166,44 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
   }
 
 
+  // 👁️ เปิด/ปิดวิธีทำ: ถ้า "เปิดดู" จะบันทึกลงฐานข้อมูลว่าเด็กดูเฉลยแล้ว (และดูก่อนที่จะตอบถูกหรือไม่)
+  const handleToggleSolution = async () => {
+    if (!currentProb) return
+    const probId = currentProb.id
+    const wasOpen = !!results[probId]?.showSolution
+
+    setResults((prev) => ({
+      ...prev,
+      [probId]: { ...prev[probId], showSolution: !wasOpen },
+    }))
+
+    if (wasOpen || !student) return // บันทึกเฉพาะตอนกด "เปิดดู"
+
+    try {
+      const { data: row } = await supabase
+        .from('submissions')
+        .select('is_correct, viewed_solution_before_correct, viewed_solution_at')
+        .eq('user_id', student.id)
+        .eq('problem_id', probId)
+        .maybeSingle()
+
+      if (!row) return // ยังไม่มีการส่งคำตอบข้อนี้ (ปกติปุ่มดูเฉลยจะแสดงหลังส่งคำตอบแล้ว)
+
+      await supabase
+        .from('submissions')
+        .update({
+          viewed_solution: true,
+          // ถ้ายังไม่เคยตอบถูกข้อนี้เลย = ดูเฉลยก่อนตอบถูก (ถ้าเคยถูกแล้วค่านี้คงเดิม)
+          viewed_solution_before_correct: row.is_correct ? !!row.viewed_solution_before_correct : true,
+          viewed_solution_at: row.viewed_solution_at || new Date().toISOString(),
+        })
+        .eq('user_id', student.id)
+        .eq('problem_id', probId)
+    } catch (err) {
+      console.error('Error saving solution view:', err)
+    }
+  }
+
   // ตรวจคำตอบอัจฉริยะด้วย mathjs
   const handleCheckAnswer = async () => {
     if (!currentProb || advancing) return
@@ -215,23 +253,35 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
     if (student) {
       const { data: existingSub } = await supabase
         .from('submissions')
-        .select('attempts')
+        .select('attempts, is_correct, student_answer, attempts_to_correct')
         .eq('user_id', student.id)
         .eq('problem_id', currentProb.id)
         .maybeSingle()
 
-      const nextAttempts = (existingSub?.attempts || 0) + 1
+      const prevAttempts = existingSub?.attempts || 0
+      const nextAttempts = prevAttempts + 1
+      const alreadySolvedInDb = !!existingSub?.is_correct // เคยตอบถูกข้อนี้ไปแล้ว (ดูจากฐานข้อมูล ไม่ใช่แค่หน้าจอ)
+
+      // 🔢 ลองกี่ครั้งจนถูก "ครั้งแรก": บันทึกครั้งเดียวตอนที่ถูกครั้งแรก ครั้งที่ทบทวนทีหลังไม่นับ
+      let attemptsToCorrect: number | null = existingSub?.attempts_to_correct ?? null
+      if (attemptsToCorrect === null && isCorrect && !alreadySolvedInDb) {
+        attemptsToCorrect = nextAttempts
+      }
 
       await supabase.from('submissions').upsert({
         user_id: student.id,
         problem_id: currentProb.id,
-        student_answer: studentAns,
-        is_correct: isCorrect,
+        // ถ้าเคยตอบถูกแล้ว ให้คงคำตอบที่ถูกไว้ ไม่ให้การทบทวนที่ตอบพลาดทีหลังมาทับ
+        student_answer: alreadySolvedInDb ? existingSub?.student_answer ?? studentAns : studentAns,
+        is_correct: alreadySolvedInDb ? true : isCorrect,
         attempts: nextAttempts,
+        attempts_to_correct: attemptsToCorrect,
+        ...(isCorrect && !alreadySolvedInDb ? { first_correct_at: new Date().toISOString() } : {}),
       }, { onConflict: 'user_id,problem_id' })
 
       // ถ้าตอบถูกครั้งแรก และยังไม่เคยถูกข้อนี้มาก่อน -> บวก +1 XP, +1 Coin และอัปเดต Streak ทันที!
-      if (isCorrect && !wasAlreadyCorrect) {
+      // (เช็กจากฐานข้อมูลด้วย กันเด็กตอบผิดแล้วตอบถูกซ้ำเพื่อเก็บ XP เพิ่ม)
+      if (isCorrect && !wasAlreadyCorrect && !alreadySolvedInDb) {
         const todayStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD (ใช้วันปัจจุบันของระบบ)
         const lastActive = student.last_active_date || ''
         let newStreak = student.streak_days || 0
@@ -680,15 +730,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                 </span>
                 {currentProb.solution_text && (
                   <button
-                    onClick={() =>
-                      setResults({
-                        ...results,
-                        [currentProb.id]: {
-                          ...results[currentProb.id],
-                          showSolution: !results[currentProb.id].showSolution,
-                        },
-                      })
-                    }
+                    onClick={handleToggleSolution}
                     className="text-xs underline cursor-pointer"
                   >
                     {results[currentProb.id].showSolution ? 'ซ่อนวิธีทำ' : 'ดูวิธีทำละเอียด'}

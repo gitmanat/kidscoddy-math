@@ -307,3 +307,16 @@ export function answerToTex(raw: string): string | null {
   }
   return out.join(' ')
 }
+
+/** ค่าตัวเลขของคำตอบ (ใช้วิเคราะห์ข้อผิดพลาด) — คืน null ถ้าไม่ใช่ตัวเลขล้วน เช่น มีตัวแปร/สมการ */
+export function numericValue(raw: string): number | null {
+  try {
+    const e = toExpr(cleanAnswer(raw))
+    if (!e || /[=<>!]/.test(e)) return null
+    if (/[a-z]/.test(e.replace(/sqrt|cbrt|pi/g, ''))) return null
+    const v = toNum(math.evaluate(e))
+    return Number.isFinite(v) ? v : null
+  } catch {
+    return null
+  }
+}
