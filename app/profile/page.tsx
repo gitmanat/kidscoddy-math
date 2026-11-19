@@ -141,7 +141,14 @@ export default function ProfileStudioPage() {
       mode: 'doll',
       equip: {
         ...(prev.equip || {}),
-        [slot]: item ? { key: item.item_key, name: item.item_name, d: item.design } : null,
+        [slot]: item
+          ? {
+              key: item.item_key,
+              name: item.item_name,
+              d: item.design,
+              ...(item.image_url ? { image_url: item.image_url } : {}),
+            }
+          : null,
       },
     }))
   }
@@ -155,7 +162,12 @@ export default function ProfileStudioPage() {
         const mustWear = key === 'outfit' || key === 'pants' || key === 'shoes'
         if (mustWear || Math.random() < 0.6) {
           const chosen = pick(pool)
-          nextEquip[key] = { key: chosen.item_key, name: chosen.item_name, d: chosen.design }
+          nextEquip[key] = {
+            key: chosen.item_key,
+            name: chosen.item_name,
+            d: chosen.design,
+            ...(chosen.image_url ? { image_url: chosen.image_url } : {}),
+          }
         } else {
           nextEquip[key] = null
         }
@@ -196,7 +208,12 @@ export default function ProfileStudioPage() {
       if (k) {
         const found = shopItems.find((it) => it.item_key === k)
         if (found && ownedKeys.has(k)) {
-          nextEquip[key] = { key: found.item_key, name: found.item_name, d: found.design }
+          nextEquip[key] = {
+            key: found.item_key,
+            name: found.item_name,
+            d: found.design,
+            ...(found.image_url ? { image_url: found.image_url } : {}),
+          }
         }
       }
     })
@@ -216,17 +233,43 @@ export default function ProfileStudioPage() {
       if (error) throw error
       if (!data?.ok) throw new Error(data?.error || 'บันทึกไม่สำเร็จ')
 
-      // กันท่าทางหาย: ถ้า RPC ฝั่งฐานข้อมูลตัดฟิลด์ pose/freePose ทิ้ง ให้ใช้ค่าที่เพิ่งบันทึกไว้ในเครื่องแทน
-      const savedCfg: any = { ...data.config }
-      if (!savedCfg.freePose && (payload as any).freePose) {
+      // กันค่าสูญหายหาก RPC save_avatar ฝั่ง DB ตัดฟิลด์บางส่วนออก (เช่น freePose, pose, bg, presets)
+      const returnedCfg: any = data.config || {}
+      const savedCfg: any = {
+        ...payload,
+        ...returnedCfg,
+        equip: {
+          ...(payload.equip || {}),
+          ...(returnedCfg.equip || {}),
+        },
+      }
+      if (!returnedCfg.freePose && (payload as any).freePose) {
         savedCfg.freePose = (payload as any).freePose
         savedCfg.pose = (payload as any).pose
-        console.warn('save_avatar ไม่ได้เก็บ pose/freePose — ต้องแก้ SQL ของฟังก์ชัน (ดูคำแนะนำ)')
       }
+      // กรณีถอด bg ออก (payload.equip.bg === null) ให้แน่ใจว่าไม่ค้างค่าเก่าจาก DB
+      if ((payload.equip as any)?.bg === null) {
+        savedCfg.equip.bg = null
+      }
+
+      const nextBgKey = savedCfg.equip?.bg?.key || null
+      const nextTitle = savedCfg.equip?.title?.name || student.equipped_title
+
+      // อัปเดตคอลัมน์สำรอง (equipped_bg, avatar_config) เพื่อให้หน้า Dashboard และตารางแรงค์อ่านตรงกันเสมอ
+      await supabase
+        .from('users')
+        .update({
+          avatar_config: savedCfg,
+          equipped_bg: nextBgKey,
+          equipped_title: nextTitle,
+        })
+        .eq('id', student.id)
+
       const updatedUser = {
         ...student,
         avatar_config: savedCfg,
-        equipped_title: data.config?.equip?.title?.name || student.equipped_title,
+        equipped_bg: nextBgKey,
+        equipped_title: nextTitle,
       }
       setStudent(updatedUser)
       setDraft(savedCfg)

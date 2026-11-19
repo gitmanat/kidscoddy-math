@@ -1930,6 +1930,17 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
           {eq.hat?.d && <Hat d={eq.hat.d} ctx={ctx} />}
         </g>
       </g>
+      {/* ประกายออร่าระดับจักรพรรดิ เมื่อใส่ไอเทมที่มี glow: true */}
+      {Object.values(eq).some((entry) => entry?.d?.glow) && (
+        <g fill="#fde047" opacity=".85">
+          <circle cx="34" cy="64" r="2.5" />
+          <circle cx="168" cy="78" r="3" />
+          <circle cx="28" cy="184" r="2.2" />
+          <circle cx="174" cy="210" r="2.8" />
+          <path d="M162 42 l2 6 l6 2 l-6 2 l-2 6 l-2 -6 l-6 -2 l6 -2 Z" />
+          <path d="M36 128 l1.5 4.5 l4.5 1.5 l-4.5 1.5 l-1.5 4.5 l-1.5 -4.5 l-4.5 -1.5 l4.5 -1.5 Z" />
+        </g>
+      )}
     </svg>
   )
 }

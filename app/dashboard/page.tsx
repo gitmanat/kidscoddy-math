@@ -1,5 +1,6 @@
 'use client'
 
+import type React from 'react'
 import { CompletedAvatarsBadge } from '@/components/AvatarDisplay'
 import { CharacterSvg } from '@/components/Character'
 import { readAvatarConfig } from '@/lib/avatar'
@@ -40,6 +41,259 @@ const getSetDate = (set: any): string => {
 const formatThaiDate = (s: string, options: Intl.DateTimeFormatOptions) =>
   s ? parseDateStr(s).toLocaleDateString('th-TH', options) : ''
 
+// =====================================================================
+// 🎨 ระบบดึงพื้นหลังของตัวละครที่เลือกจากหน้าโปรไฟล์ & แต่งตัว
+// รองรับทั้ง equip.bg (design.css / design.colors / image_url / pattern / shape),
+// fallback จากคอลัมน์ equipped_bg ในตาราง users และโหมด portrait
+// =====================================================================
+type AvatarCfg = ReturnType<typeof readAvatarConfig>
+
+type ResolvedAvatarBg = {
+  imageUrl: string | null
+  cssBackground: string | null
+  patternType: 'chalkboard' | 'stars' | 'grid' | 'aurora' | null
+  isPortraitMode: boolean
+  hasBg: boolean
+}
+
+function resolveAvatarBackground(
+  config: AvatarCfg | null | undefined,
+  fallbackBgKey?: string | null,
+  shopBgMap?: Record<string, any>
+): ResolvedAvatarBg {
+  const cfg: any = config || {}
+  const bgEquip = cfg.equip?.bg
+  const fallbackItem = !bgEquip && fallbackBgKey && shopBgMap ? shopBgMap[fallbackBgKey] : null
+  const shopItemByKey = bgEquip?.key && shopBgMap ? shopBgMap[bgEquip.key] : null
+
+  const bgDesign = ((bgEquip?.d || shopItemByKey?.design || fallbackItem?.design || {}) as Record<string, any>)
+  const bgKey = String(bgEquip?.key || fallbackBgKey || '').toLowerCase()
+  const bgName = String(bgEquip?.name || fallbackItem?.item_name || '').toLowerCase()
+
+  const isPortraitMode = cfg.mode === 'portrait' && !!cfg.portrait
+
+  const imageUrl: string | null =
+    bgEquip?.image_url ||
+    bgDesign.image_url ||
+    bgDesign.imageUrl ||
+    bgDesign.url ||
+    bgDesign.image ||
+    bgDesign.bg_url ||
+    bgDesign.bgUrl ||
+    shopItemByKey?.image_url ||
+    fallbackItem?.image_url ||
+    (isPortraitMode ? cfg.portrait : null)
+
+  const colors: string[] | undefined = Array.isArray(bgDesign.colors) ? bgDesign.colors : undefined
+  const cssRaw = typeof bgDesign.css === 'string' && bgDesign.css.trim() ? bgDesign.css.trim() : null
+  const cssBackground: string | null =
+    cssRaw ||
+    (colors && colors.length >= 2
+      ? `linear-gradient(135deg, ${colors.join(', ')})`
+      : colors && colors.length === 1
+      ? colors[0]
+      : null)
+
+  const shape = String(bgDesign.shape || bgDesign.pattern || bgDesign.style || bgKey).toLowerCase()
+
+  let patternType: ResolvedAvatarBg['patternType'] = null
+  if (
+    shape.includes('chalk') ||
+    shape.includes('board') ||
+    shape.includes('math') ||
+    bgName.includes('กระดานดำ')
+  ) {
+    patternType = 'chalkboard'
+  } else if (
+    shape.includes('star') ||
+    shape.includes('galaxy') ||
+    shape.includes('space') ||
+    shape.includes('night') ||
+    bgName.includes('อวกาศ') ||
+    bgName.includes('ดาว') ||
+    bgName.includes('จักรวาล')
+  ) {
+    patternType = 'stars'
+  } else if (
+    shape.includes('grid') ||
+    shape.includes('cyber') ||
+    shape.includes('neon') ||
+    bgName.includes('ไซเบอร์') ||
+    bgName.includes('ตาราง')
+  ) {
+    patternType = 'grid'
+  } else if (
+    shape.includes('aurora') ||
+    shape.includes('magic') ||
+    bgName.includes('ออโรร่า') ||
+    bgName.includes('เวทมนตร์')
+  ) {
+    patternType = 'aurora'
+  }
+
+  const hasBg = !!(imageUrl || cssBackground || patternType || bgEquip || fallbackItem)
+
+  return {
+    imageUrl,
+    cssBackground,
+    patternType,
+    isPortraitMode,
+    hasBg,
+  }
+}
+
+function AvatarBgLayer({ bg }: { bg: ResolvedAvatarBg }) {
+  if (!bg.hasBg) return null
+
+  return (
+    <>
+      {bg.imageUrl && (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={bg.imageUrl}
+          alt="avatar background"
+          className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none z-0"
+        />
+      )}
+
+      {!bg.imageUrl && bg.patternType === 'chalkboard' && (
+        <div
+          className="absolute inset-0 pointer-events-none z-0"
+          style={{
+            backgroundColor: bg.cssBackground ? undefined : '#1e3a2f',
+            backgroundImage:
+              'radial-gradient(rgba(255,255,255,0.22) 1px, transparent 0), linear-gradient(to right, rgba(255,255,255,0.08) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.08) 1px, transparent 1px)',
+            backgroundSize: '18px 18px, 12px 12px, 12px 12px',
+          }}
+        />
+      )}
+
+      {!bg.imageUrl && bg.patternType === 'stars' && (
+        <div
+          className="absolute inset-0 pointer-events-none z-0"
+          style={{
+            backgroundColor: bg.cssBackground ? undefined : '#0f172a',
+            backgroundImage:
+              'radial-gradient(rgba(255,255,255,0.85) 1px, transparent 0), radial-gradient(rgba(199,210,254,0.55) 1.5px, transparent 0)',
+            backgroundSize: '20px 20px, 31px 31px',
+            backgroundPosition: '0 0, 11px 15px',
+          }}
+        />
+      )}
+
+      {!bg.imageUrl && bg.patternType === 'grid' && (
+        <div
+          className="absolute inset-0 pointer-events-none z-0 opacity-45"
+          style={{
+            backgroundImage:
+              'linear-gradient(to right, rgba(255,255,255,0.28) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.28) 1px, transparent 1px)',
+            backgroundSize: '14px 14px',
+          }}
+        />
+      )}
+
+      {!bg.imageUrl && bg.patternType === 'aurora' && (
+        <div
+          className="absolute inset-0 pointer-events-none z-0 opacity-65"
+          style={{
+            background:
+              bg.cssBackground ||
+              'radial-gradient(circle at 20% 20%, #34d399 0%, transparent 55%), radial-gradient(circle at 80% 75%, #818cf8 0%, #1e1b4b 85%)',
+          }}
+        />
+      )}
+    </>
+  )
+}
+
+// =====================================================================
+// 🕯️ กรอบโปรไฟล์ตามที่เลือก + แสงค่อยๆ สว่างแล้วดับช้าๆ (สบายตา ไม่ตาลาย)
+// =====================================================================
+function FramedAvatarBox({
+  config,
+  fallbackFrame,
+  fallbackBg,
+  shopBgMap,
+  sizeClass = 'w-16 h-20 sm:w-20 sm:h-24',
+  animate = false,
+  badge,
+}: {
+  config: AvatarCfg
+  fallbackFrame?: string | null
+  fallbackBg?: string | null
+  shopBgMap?: Record<string, any>
+  sizeClass?: string
+  animate?: boolean
+  badge?: React.ReactNode
+}) {
+  const frameDesign = config.equip?.frame?.d
+  const frameStyle = frameDesign?.style || (fallbackFrame ? 'glow' : 'solid')
+  const [c1, c2, c3] = frameDesign?.colors || ['#e0e7ff', '#c7d2fe', '#818cf8']
+  const hasCustomFrame = !!config.equip?.frame || !!fallbackFrame
+  const hasSoftGlow = hasCustomFrame && (frameStyle === 'glow' || frameStyle === 'rainbow')
+
+  const bgInfo = resolveAvatarBackground(config, fallbackBg, shopBgMap)
+
+  const borderBackground = !hasCustomFrame
+    ? 'linear-gradient(135deg, #e0e7ff, #f3e8ff)'
+    : frameStyle === 'rainbow'
+    ? 'linear-gradient(135deg, #f59e0b, #ec4899, #6366f1, #10b981)'
+    : `linear-gradient(135deg, ${c1}, ${c2 || c1}, ${c3 || c2 || c1})`
+
+  const boxInlineStyle: React.CSSProperties | undefined =
+    !bgInfo.imageUrl && bgInfo.cssBackground
+      ? { background: bgInfo.cssBackground }
+      : bgInfo.patternType === 'chalkboard'
+      ? { backgroundColor: '#1e3a2f' }
+      : bgInfo.patternType === 'stars'
+      ? { backgroundColor: '#0f172a' }
+      : undefined
+
+  return (
+    <div className={`relative ${sizeClass} shrink-0`}>
+      <style>{`
+        @keyframes kcSoftFrameBreath {
+          0%, 100% {
+            opacity: 0.12;
+            transform: scale(0.99);
+          }
+          50% {
+            opacity: 0.65;
+            transform: scale(1.02);
+          }
+        }
+      `}</style>
+
+      {hasSoftGlow && (
+        <div
+          className="absolute -inset-1 rounded-[22px] blur-md pointer-events-none"
+          style={{
+            background: borderBackground,
+            animation: 'kcSoftFrameBreath 4.5s ease-in-out infinite',
+          }}
+        />
+      )}
+
+      <div
+        className="relative w-full h-full rounded-2xl p-[3.5px] shadow-sm"
+        style={{ background: borderBackground }}
+      >
+        <div
+          className="relative w-full h-full rounded-[13px] overflow-hidden bg-white"
+          style={boxInlineStyle}
+        >
+          <AvatarBgLayer bg={bgInfo} />
+
+          {!bgInfo.isPortraitMode && (
+            <CharacterSvg config={config} animate={animate} className="relative z-10 w-full h-full" />
+          )}
+          {badge}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 type Completion = { stars: number; score: number; total: number }
 const EMPTY_COMPLETION: Completion = { stars: 0, score: 0, total: 0 }
 
@@ -57,6 +311,7 @@ export default function StudentDashboard() {
   const [problemSets, setProblemSets] = useState<any[]>([])
   const [completions, setCompletions] = useState<{ [setId: string]: { stars: number; score: number; total: number } }>({})
   const [leaderboard, setLeaderboard] = useState<any[]>([])
+  const [shopBgMap, setShopBgMap] = useState<Record<string, any>>({})
   const [loading, setLoading] = useState(true)
 
   const [sosPendingCount, setSosPendingCount] = useState(0)
@@ -86,22 +341,29 @@ export default function StudentDashboard() {
     }
     const userData = JSON.parse(storedUser)
     setStudent(userData)
-    
+
     if (userData.group_name) {
       setSelectedGroup(userData.group_name)
     }
-    
+
     fetchDashboardData(userData.id)
     fetchCompletionsData()
   }, [router])
 
   const fetchDashboardData = async (userId: string) => {
     try {
-      const { data: latestUser } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single()
+      const [{ data: latestUser }, { data: bgItems }] = await Promise.all([
+        supabase.from('users').select('*').eq('id', userId).single(),
+        supabase.from('shop_items').select('item_key, item_name, design, image_url').eq('item_type', 'bg'),
+      ])
+
+      if (bgItems) {
+        const bgLookup: Record<string, any> = {}
+        bgItems.forEach((it) => {
+          bgLookup[it.item_key] = it
+        })
+        setShopBgMap(bgLookup)
+      }
 
       if (latestUser) {
         setStudent(latestUser)
@@ -114,7 +376,7 @@ export default function StudentDashboard() {
         .eq('is_active', true)
 
       if (specialQuestsData) {
-        const ids = specialQuestsData.map(q => q.target_set_id).filter(Boolean)
+        const ids = specialQuestsData.map((q) => q.target_set_id).filter(Boolean)
         setSpecialSetIds(ids)
       }
 
@@ -198,47 +460,48 @@ export default function StudentDashboard() {
   }
 
   const fetchCompletionsData = async () => {
-      try {
-        const { data: completionsData, error } = await supabase
-          .from('set_completions')
-          .select(`
-            set_id,
-            score,
-            total_questions,
-            completed_at,
-            users (
-              id,
-              display_name,
-              avatar_config,
-              avatar_url,
-              equipped_outfit
-            )
-          `)
-          .order('score', { ascending: false })
-          .order('completed_at', { ascending: false })
+    try {
+      const { data: completionsData, error } = await supabase
+        .from('set_completions')
+        .select(`
+          set_id,
+          score,
+          total_questions,
+          completed_at,
+          users (
+            id,
+            display_name,
+            avatar_config,
+            avatar_url,
+            equipped_outfit,
+            equipped_bg
+          )
+        `)
+        .order('score', { ascending: false })
+        .order('completed_at', { ascending: false })
 
-        if (error) throw error
+      if (error) throw error
 
-        const grouped: Record<string, any[]> = {}
-        if (completionsData) {
-          completionsData.forEach((item: any) => {
-            if (!grouped[item.set_id]) {
-              grouped[item.set_id] = []
-            }
-            const userObj = Array.isArray(item.users) ? item.users[0] : item.users
-            if (userObj) {
-              grouped[item.set_id].push({
-                ...userObj,
-                coinsEarned: item.score || 0,
-                isPerfect: item.total_questions > 0 && item.score === item.total_questions,
-              })
-            }
-          })
-        }
-        setCompletionsBySet(grouped)
-      } catch (err) {
-        console.error('Error fetching completions:', err)
+      const grouped: Record<string, any[]> = {}
+      if (completionsData) {
+        completionsData.forEach((item: any) => {
+          if (!grouped[item.set_id]) {
+            grouped[item.set_id] = []
+          }
+          const userObj = Array.isArray(item.users) ? item.users[0] : item.users
+          if (userObj) {
+            grouped[item.set_id].push({
+              ...userObj,
+              coinsEarned: item.score || 0,
+              isPerfect: item.total_questions > 0 && item.score === item.total_questions,
+            })
+          }
+        })
       }
+      setCompletionsBySet(grouped)
+    } catch (err) {
+      console.error('Error fetching completions:', err)
+    }
   }
 
   const baseSets = useMemo(() => {
@@ -333,6 +596,12 @@ export default function StudentDashboard() {
   const displayedProblemSets = showAllSets ? filteredProblemSets : filteredProblemSets.slice(0, 4)
   const hasFilter = searchQuery.trim() !== '' || selectedGroup !== 'all'
   const dayProgressPct = daySummary.total > 0 ? (daySummary.perfect / daySummary.total) * 100 : 0
+
+  const studentConfig = useMemo(() => readAvatarConfig(student), [student])
+  const studentBg = useMemo(
+    () => resolveAvatarBackground(studentConfig, student?.equipped_bg, shopBgMap),
+    [studentConfig, student?.equipped_bg, shopBgMap]
+  )
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังโหลดภารกิจของคุณ...</div>
@@ -448,30 +717,46 @@ export default function StudentDashboard() {
       </header>
 
       <main className="max-w-5xl mx-auto px-6 mt-8 space-y-8">
-        
         {/* ส่วนที่ 1: Gamification Profile Card */}
-        <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-visible">
+        <div
+          className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-visible"
+          style={
+            !studentBg.imageUrl && studentBg.cssBackground
+              ? { background: studentBg.cssBackground }
+              : undefined
+          }
+        >
           <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
+            {studentBg.hasBg && (
+              <>
+                <AvatarBgLayer bg={studentBg} />
+                <div className="absolute inset-0 bg-slate-950/45" />
+              </>
+            )}
             <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12" />
           </div>
 
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative z-10">
-            
-            {/* แสดงตัวละครเต็มตัว + สัตว์เลี้ยง */}
+            {/* แสดงตัวละครเต็มตัว + สัตว์เลี้ยง + กรอบแสงสว่างดับนุ่มๆ */}
             <div className="flex flex-col sm:flex-row items-center gap-5 pt-1">
               <div
                 onClick={() => router.push('/profile')}
                 title="คลิกเพื่อเข้าห้องแต่งตัวละคร"
-                className="group relative w-32 h-40 sm:w-36 sm:h-44 rounded-3xl overflow-hidden shadow-xl border-2 border-white/40 cursor-pointer shrink-0 transition-transform hover:scale-105 bg-white/10"
+                className="cursor-pointer transition-transform hover:scale-105"
               >
-                <CharacterSvg
-                  config={readAvatarConfig(student)}
+                <FramedAvatarBox
+                  config={studentConfig}
+                  fallbackFrame={student?.avatar_frame}
+                  fallbackBg={student?.equipped_bg}
+                  shopBgMap={shopBgMap}
+                  sizeClass="w-32 h-40 sm:w-36 sm:h-44"
                   animate={true}
-                  className="w-full h-full"
+                  badge={
+                    <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-[10px] font-black text-white hover:bg-amber-400 hover:text-gray-900 transition whitespace-nowrap z-20">
+                      🎨 แต่งตัว
+                    </span>
+                  }
                 />
-                <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-[10px] font-black text-white opacity-90 group-hover:bg-amber-400 group-hover:text-gray-900 transition whitespace-nowrap">
-                  🎨 แต่งตัว
-                </span>
               </div>
 
               <div className="space-y-1.5 text-center sm:text-left">
@@ -480,7 +765,7 @@ export default function StudentDashboard() {
                     ⭐ Level {currentLevel}
                   </span>
                   <span className="text-xs font-bold text-purple-200">
-                    {readAvatarConfig(student).equip?.title?.name || student?.equipped_title || getLevelTitle(currentLevel)}
+                    {studentConfig.equip?.title?.name || student?.equipped_title || getLevelTitle(currentLevel)}
                   </span>
                 </div>
                 <h2 className="text-xl md:text-2xl font-black">
@@ -529,12 +814,12 @@ export default function StudentDashboard() {
         </div>
 
         {/* ภารกิจพิเศษ */}
-        <div 
+        <div
           onClick={() => router.push('/quests')}
           className="bg-gradient-to-r from-rose-500 via-pink-500 to-purple-600 rounded-3xl p-6 text-white shadow-xl cursor-pointer hover:scale-[1.01] transition transform flex flex-col md:flex-row justify-between items-center gap-4 relative overflow-hidden"
         >
           <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
-          
+
           <div className="flex items-center space-x-4 relative z-10">
             <div className="w-14 h-14 rounded-2xl bg-white/20 backdrop-blur-md flex items-center justify-center text-3xl shadow-inner shrink-0">
               🎯
@@ -674,7 +959,7 @@ export default function StudentDashboard() {
                 })}
               </div>
               <p className="text-[10px] text-gray-400 font-bold mt-2 text-center">
-                ✅ ทำเต็มครบแล้ว  •  🔥N = ยังเหลือ N ชุด  •  · = ไม่มีการบ้าน
+                ✅ ทำเต็มครบแล้ว  •  🔥N = ยังเหลือ N ชุด  •  · = ไม่มีการบ้าน
               </p>
             </div>
           </div>
@@ -770,7 +1055,7 @@ export default function StudentDashboard() {
             <div className="grid gap-6 md:grid-cols-2">
               {displayedProblemSets.map((set) => {
                 const comp = completions[set.id] || EMPTY_COMPLETION
-                const { isPerfect, isInProgress, missingPoints } = getProgress(comp)
+                const { isPerfect, isInProgress } = getProgress(comp)
 
                 return (
                   <div
@@ -837,9 +1122,7 @@ export default function StudentDashboard() {
           )}
         </div>
 
-        {/* =====================================================================
-            ส่วนที่ 3: กระดานผู้นำ (Leaderboard / แรงค์) — แสดงตัวละครเต็มตัว + สัตว์เลี้ยง + ฉายา
-            ===================================================================== */}
+        {/* ส่วนที่ 3: กระดานผู้นำ (Leaderboard / แรงค์) */}
         <div className="bg-white/95 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-md border border-indigo-100">
           <div className="flex items-center justify-between mb-4">
             <div>
@@ -857,7 +1140,7 @@ export default function StudentDashboard() {
             <div className="space-y-3">
               {leaderboard.map((item, index) => {
                 const isMe = item.id === student?.id
-                
+
                 let rankBadge = 'bg-gray-100 text-gray-600'
                 if (index === 0) rankBadge = 'bg-amber-400 text-white shadow-md font-black'
                 else if (index === 1) rankBadge = 'bg-slate-300 text-white font-black'
@@ -868,7 +1151,7 @@ export default function StudentDashboard() {
 
                 return (
                   <div
-                    key={index}
+                    key={item.id || index}
                     className={`flex items-center justify-between p-4 rounded-2xl border transition ${
                       isMe ? 'bg-indigo-50/90 border-indigo-300 ring-2 ring-indigo-200 shadow-sm' : 'bg-gray-50/50 border-gray-100'
                     }`}
@@ -878,17 +1161,20 @@ export default function StudentDashboard() {
                         {index + 1}
                       </div>
 
-                      {/* 🏆 แสดงตัวละครเต็มตัว + สัตว์เลี้ยงของเพื่อนๆ */}
-                      <div className="relative w-16 h-20 sm:w-20 sm:h-24 rounded-2xl overflow-hidden shadow-sm border border-indigo-100 shrink-0 bg-white">
-                        <CharacterSvg
-                          config={friendConfig}
-                          animate={index < 3}
-                          className="w-full h-full"
-                        />
-                        <span className="absolute bottom-0.5 right-0.5 px-1.5 py-0.2 rounded-md bg-indigo-600/90 text-white text-[9px] font-black">
-                          Lv.{item.level || 1}
-                        </span>
-                      </div>
+                      {/* แสดงตัวละครเต็มตัว + สัตว์เลี้ยง + พื้นหลัง + กรอบแสงสว่างดับนุ่มๆ */}
+                      <FramedAvatarBox
+                        config={friendConfig}
+                        fallbackFrame={item.avatar_frame}
+                        fallbackBg={item.equipped_bg}
+                        shopBgMap={shopBgMap}
+                        sizeClass="w-16 h-20 sm:w-20 sm:h-24"
+                        animate={index < 3}
+                        badge={
+                          <span className="absolute bottom-0.5 right-0.5 px-1.5 py-0.2 rounded-md bg-indigo-600/90 text-white text-[9px] font-black z-20">
+                            Lv.{item.level || 1}
+                          </span>
+                        }
+                      />
 
                       <div>
                         <h4 className="font-extrabold text-gray-800 text-sm flex items-center gap-2">
