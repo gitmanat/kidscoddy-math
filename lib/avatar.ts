@@ -21,12 +21,19 @@ export type HairStyle =
 export type EyeStyle = 'round' | 'happy' | 'sparkle' | 'sleepy' | 'wink' | 'phoenix' | 'sword'
 export type MouthStyle = 'smile' | 'grin' | 'cat' | 'open' | 'smirk' | 'rouge' | 'calm' | 'mustache'
 
+/** วัยของตัวละคร: เด็ก / วัยรุ่น / วัยกลางคน / ผู้เฒ่า */
+export type AgeStyle = 'child' | 'teen' | 'adult' | 'elder'
+/** รูปร่าง: เพรียว / ปกติ / ล่ำสัน / อวบ */
+export type BuildStyle = 'slim' | 'normal' | 'sturdy' | 'round'
+
 export interface AvatarBase {
   skin: string
   hair: HairStyle
   hairColor: string
   eyes: EyeStyle
   mouth: MouthStyle
+  age: AgeStyle
+  build: BuildStyle
 }
 
 export type BgPatternKey = 'cloud' | 'calligraphy' | 'plum' | 'stars' | 'coins' | 'math' | 'dots' | 'hearts'
@@ -40,6 +47,13 @@ export interface ItemDesign {
   style?: string // frame: solid | gradient | glow | rainbow
   emblem?: string
   glow?: boolean // shoes 'cloud': มีก้อนเมฆลอยตามหลัง
+  /**
+   * ตัวแปรประกอบชิ้นส่วน — shape เดียวกันแต่รูปทรงต่างกันจริง
+   *  - pet 'dragon'      : head = eastern|lion|fish · body = serpent|coil · element = none|fire|water|thunder|ice|jade
+   *  - hand 'sword_chinese': blade = straight|flame|leaf|crystal · hilt = wing|disc · aura = none|fire|ice|thunder|jade
+   *  - hand 'saber'      : blade = curved|broad|ringed · aura = (เหมือนกระบี่)
+   */
+  variant?: Record<string, string>
   [key: string]: unknown
 }
 
@@ -54,11 +68,9 @@ export interface AvatarConfig {
   mode?: 'doll' | 'portrait'
   base?: Partial<AvatarBase>
   equip?: Partial<Record<Slot, EquipEntry | null>>
+  /** สีที่เด็กเลือกเองบนไอเทมที่ซื้อแล้ว (ผูกกับ key ไอเทม เปลี่ยนไอเทม = กลับเป็นสีเดิมอัตโนมัติ) */
+  colorOverrides?: Partial<Record<Slot, { key: string; colors: string[] }>>
   portrait?: string | null // ภาพอวตารสำเร็จรูปรุ่นเก่า (DiceBear)
-  /** ท่าทาง: คีย์ท่าสำเร็จรูป หรือ 'custom' เมื่อเด็กขยับเอง */
-  pose?: string
-  /** ตำแหน่ง/มุมของแต่ละชิ้นส่วน (ตัวจริงที่ใช้วาด) — ต้องถูกเก็บใน DB ด้วย */
-  freePose?: Partial<Record<'lArm' | 'rArm' | 'lLeg' | 'rLeg' | 'body' | 'hand' | 'pet', { x: number; y: number; deg: number }>>
 }
 
 export const DEFAULT_BASE: AvatarBase = {
@@ -67,6 +79,8 @@ export const DEFAULT_BASE: AvatarBase = {
   hairColor: '#2b2b2b',
   eyes: 'round',
   mouth: 'smile',
+  age: 'teen',
+  build: 'normal',
 }
 
 export const SKIN_TONES = ['#ffe0c2', '#f7c9a0', '#e8a87c', '#c68642', '#8d5524', '#5c3a21']
@@ -106,6 +120,80 @@ export const MOUTH_STYLES: { key: MouthStyle; label: string }[] = [
   { key: 'open', label: 'ตื่นเต้น' },
 ]
 
+export const AGE_STYLES: { key: AgeStyle; label: string; icon: string; hint: string }[] = [
+  { key: 'child', label: 'เด็กน้อย', icon: '🧒', hint: 'หัวโต ตัวเตี้ย ตากลมโต' },
+  { key: 'teen', label: 'วัยรุ่น', icon: '🧑', hint: 'สัดส่วนมาตรฐาน' },
+  { key: 'adult', label: 'วัยกลางคน', icon: '🧔', hint: 'ไหล่กว้าง คิ้วเข้ม ร่องแก้ม' },
+  { key: 'elder', label: 'ผู้เฒ่า', icon: '👴', hint: 'ผมหงอก คิ้วขาว ริ้วรอย ตัวเตี้ยหลังค่อม' },
+]
+export const BUILD_STYLES: { key: BuildStyle; label: string; icon: string }[] = [
+  { key: 'slim', label: 'เพรียว', icon: '🎋' },
+  { key: 'normal', label: 'ปกติ', icon: '🧍' },
+  { key: 'sturdy', label: 'ล่ำสัน', icon: '💪' },
+  { key: 'round', label: 'อวบ', icon: '🍑' },
+]
+
+/** พารามิเตอร์สัดส่วน: head = ขนาดหัว, sx/sy = ยืดตัวด้านกว้าง/สูง (ย่อรอบเท้า), drop = คอหด (ผู้เฒ่า), faceScale = ขนาดหน้า */
+export const AGE_PARAMS: Record<AgeStyle, { head: number; sx: number; sy: number; drop: number; faceScale: number }> = {
+  child: { head: 1.16, sx: 0.94, sy: 0.8, drop: 0, faceScale: 1.08 },
+  teen: { head: 1, sx: 1, sy: 1, drop: 0, faceScale: 1 },
+  adult: { head: 0.97, sx: 1.05, sy: 1.04, drop: 0, faceScale: 1 },
+  elder: { head: 0.98, sx: 0.98, sy: 0.93, drop: 5, faceScale: 1 },
+}
+export const BUILD_SX: Record<BuildStyle, number> = { slim: 0.86, normal: 1, sturdy: 1.18, round: 1.3 }
+
+export function bodyParams(base: Partial<AvatarBase>) {
+  const a = AGE_PARAMS[(base.age as AgeStyle) in AGE_PARAMS ? (base.age as AgeStyle) : 'teen']
+  const bx = BUILD_SX[(base.build as BuildStyle) in BUILD_SX ? (base.build as BuildStyle) : 'normal']
+  return { head: a.head, sx: a.sx * bx, sy: a.sy, drop: a.drop, faceScale: a.faceScale }
+}
+
+/** สีดั้งเดิมแบบจีน (ชื่อไทย + ชื่อจีน) ให้เด็กเลือกทาไอเทมที่ซื้อแล้ว */
+export const CHINESE_COLORS: { hex: string; name: string }[] = [
+  { hex: '#e0402a', name: 'แดงชาด 朱砂' },
+  { hex: '#b8244d', name: 'แดงเยนจือ 胭脂' },
+  { hex: '#f4a0b8', name: 'ชมพูท้อ 桃红' },
+  { hex: '#f59e0b', name: 'ส้มทอง 橙黄' },
+  { hex: '#facc15', name: 'เหลืองจักรพรรดิ 帝王黄' },
+  { hex: '#fde68a', name: 'เหลืองห่าน 鹅黄' },
+  { hex: '#65a30d', name: 'เขียวไผ่ 竹青' },
+  { hex: '#34d399', name: 'เขียวหยก 翡翠' },
+  { hex: '#7dd3fc', name: 'ฟ้าหลังฝน 天青' },
+  { hex: '#2f4fa8', name: 'น้ำเงินคราม 靛蓝' },
+  { hex: '#1e3a8a', name: 'น้ำเงินเข้ม 藏青' },
+  { hex: '#6d28d9', name: 'ม่วงจันทน์ 紫檀' },
+  { hex: '#1f2937', name: 'ดำสนิท 玄黑' },
+  { hex: '#6b7280', name: 'เทาหมึก 墨灰' },
+  { hex: '#f1f5f9', name: 'ขาวจันทร์ 月白' },
+  { hex: '#92400e', name: 'น้ำตาลดินแดง 赭石' },
+  { hex: '#fbbf24', name: 'ทอง 金' },
+  { hex: '#cbd5e1', name: 'เงิน 银' },
+]
+
+/** design ของช่องนั้น หลังซ้อนสีที่เด็กเลือกเองแล้ว (ใช้ตอนวาดตัวละคร) */
+export function effectiveDesign(cfg: AvatarConfig, slot: Slot): ItemDesign | undefined {
+  const e = cfg.equip?.[slot]
+  if (!e?.d) return undefined
+  const o = cfg.colorOverrides?.[slot]
+  return o && o.key === e.key ? { ...e.d, colors: o.colors } : e.d
+}
+
+/** เปลี่ยนสีช่องที่ idx (0=หลัก 1=รอง 2=เน้น) ของไอเทมที่ใส่อยู่ในช่อง slot */
+export function setColorOverride(cfg: AvatarConfig, slot: Slot, idx: number, hex: string): AvatarConfig {
+  const e = cfg.equip?.[slot]
+  if (!e?.d) return cfg
+  const cur = [...(effectiveDesign(cfg, slot)?.colors || [])]
+  while (cur.length < 3) cur.push(cur[cur.length - 1] || '#888888')
+  cur[idx] = hex
+  return { ...cfg, colorOverrides: { ...(cfg.colorOverrides || {}), [slot]: { key: e.key, colors: cur } } }
+}
+
+export function clearColorOverride(cfg: AvatarConfig, slot: Slot): AvatarConfig {
+  const next = { ...(cfg.colorOverrides || {}) }
+  delete next[slot]
+  return { ...cfg, colorOverrides: next }
+}
+
 // key ของ slot คงเดิม (เพื่อไม่ให้ข้อมูลใน DB พัง) เปลี่ยนเฉพาะชื่อและไอคอนที่แสดง
 export const SLOT_META: { key: Slot; label: string; icon: string; wearable: boolean }[] = [
   { key: 'outfit', label: 'ชุด', icon: '🥋', wearable: true },
@@ -139,8 +227,17 @@ export interface ShapeOption {
   shape: string
   label: string
   colors: [string, string, string]
+  variant?: Record<string, string>
   extra?: Partial<ItemDesign>
 }
+
+/** แปลง ShapeOption → design ที่เก็บใน shop_items.design */
+export const designOf = (o: ShapeOption): ItemDesign => ({
+  shape: o.shape,
+  colors: [...o.colors],
+  ...(o.variant ? { variant: o.variant } : {}),
+  ...(o.extra || {}),
+})
 
 export const SHAPE_OPTIONS: Record<Exclude<Slot, 'frame' | 'title'>, ShapeOption[]> = {
   outfit: [

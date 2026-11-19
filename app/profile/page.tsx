@@ -7,11 +7,16 @@ import { CoinIcon } from '@/components/CoinIcon'
 import { CharacterStage } from '@/components/AvatarDisplay'
 //import { POSE_PRESETS, type PosePresetKey } from '@/components/Character'
 import {
+  type AgeStyle,
   type AvatarConfig,
+  type BuildStyle,
   type EyeStyle,
   type HairStyle,
   type MouthStyle,
   type Slot,
+  AGE_STYLES,
+  BUILD_STYLES,
+  CHINESE_COLORS,
   EYE_STYLES,
   HAIR_COLORS,
   HAIR_STYLES,
@@ -19,9 +24,12 @@ import {
   RARITY_META,
   SKIN_TONES,
   SLOT_META,
+  clearColorOverride,
+  effectiveDesign,
   rarityOf,
   readAvatarConfig,
   resolveBase,
+  setColorOverride,
   titleOf,
 } from '@/lib/avatar'
 import {
@@ -178,6 +186,7 @@ export default function ProfileStudioPage() {
       ...prev,
       mode: 'doll',
       base: {
+        ...(prev.base || {}), // คงวัย/รูปร่างที่เด็กเลือกไว้
         skin: pick(SKIN_TONES),
         hair: pick(HAIR_STYLES).key,
         hairColor: pick(HAIR_COLORS),
@@ -246,6 +255,11 @@ export default function ProfileStudioPage() {
       if (!returnedCfg.freePose && (payload as any).freePose) {
         savedCfg.freePose = (payload as any).freePose
         savedCfg.pose = (payload as any).pose
+      }
+      // กันค่าใหม่ (วัย/รูปร่าง/สีที่ทาเอง) สูญหายหาก RPC save_avatar ตัดฟิลด์ที่ไม่รู้จักออก — ค่าที่เด็กเลือกชนะเสมอ
+      savedCfg.base = { ...(returnedCfg.base || {}), ...((payload as any).base || {}) }
+      if (!returnedCfg.colorOverrides && (payload as any).colorOverrides) {
+        savedCfg.colorOverrides = (payload as any).colorOverrides
       }
       // กรณีถอด bg ออก (payload.equip.bg === null) ให้แน่ใจว่าไม่ค้างค่าเก่าจาก DB
       if ((payload.equip as any)?.bg === null) {
@@ -452,6 +466,47 @@ export default function ProfileStudioPage() {
             {activeTab === 'face' && (
               
               <div className="space-y-5">
+
+                <div>
+                  <h3 className="text-xs font-black text-gray-700 mb-2">🧬 วัยของตัวละคร</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {AGE_STYLES.map((a) => (
+                      <button
+                        key={a.key}
+                        type="button"
+                        onClick={() => updateBase({ age: a.key as AgeStyle })}
+                        className={`px-3 py-2.5 rounded-2xl border text-left transition cursor-pointer ${
+                          base.age === a.key
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-800 ring-2 ring-indigo-200'
+                            : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                        }`}
+                      >
+                        <div className="text-xs font-extrabold">{a.icon} {a.label}</div>
+                        <div className="text-[10px] font-bold text-gray-400 leading-tight mt-0.5">{a.hint}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-black text-gray-700 mb-2">💪 รูปร่าง</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {BUILD_STYLES.map((b) => (
+                      <button
+                        key={b.key}
+                        type="button"
+                        onClick={() => updateBase({ build: b.key as BuildStyle })}
+                        className={`px-3 py-2.5 rounded-2xl border text-xs font-extrabold transition cursor-pointer ${
+                          base.build === b.key
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-800 ring-2 ring-indigo-200'
+                            : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                        }`}
+                      >
+                        {b.icon} {b.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
 
                 <div>
                   <h3 className="text-xs font-black text-gray-700 mb-2">🕺 ท่าทางสำเร็จรูป (Presets)</h3>
@@ -718,6 +773,53 @@ export default function ProfileStudioPage() {
                     })}
                   </div>
                 )}
+
+                {/* ทาสีไอเทมที่ใส่อยู่เอง — สีเป็นของฟรี ร้านค้าขายเฉพาะ "รูปทรง" */}
+                {activeTab !== 'bg' &&
+                  activeTab !== 'frame' &&
+                  activeTab !== 'title' &&
+                  draft.mode !== 'portrait' &&
+                  draft.equip?.[activeTab]?.d?.colors && (
+                    <div className="p-4 rounded-2xl border border-indigo-100 bg-indigo-50/40 space-y-3">
+                      <div className="flex items-center justify-between">
+                        <h4 className="text-xs font-black text-gray-700">🎨 ทาสีชิ้นนี้เอง (ฟรี)</h4>
+                        {draft.colorOverrides?.[activeTab] && (
+                          <button
+                            type="button"
+                            onClick={() => setDraft((prev) => clearColorOverride(prev, activeTab))}
+                            className="px-2.5 py-1 rounded-lg bg-white hover:bg-gray-100 border border-gray-200 text-[11px] font-extrabold text-gray-600 cursor-pointer"
+                          >
+                            ↩️ กลับสีเดิม
+                          </button>
+                        )}
+                      </div>
+                      {['สีหลัก', 'สีรอง', 'สีเน้น'].map((label, idx) => {
+                        const cur = effectiveDesign(draft, activeTab)?.colors?.[idx]
+                        return (
+                          <div key={label}>
+                            <p className="text-[11px] font-bold text-gray-500 mb-1">{label}</p>
+                            <div className="flex flex-wrap gap-1.5">
+                              {CHINESE_COLORS.map((c) => (
+                                <button
+                                  key={c.hex}
+                                  type="button"
+                                  title={c.name}
+                                  onClick={() => setDraft((prev) => setColorOverride(prev, activeTab, idx, c.hex))}
+                                  className={`w-7 h-7 rounded-lg border-2 transition cursor-pointer ${
+                                    cur?.toLowerCase() === c.hex ? 'border-indigo-600 scale-110 ring-2 ring-indigo-200' : 'border-white shadow-sm'
+                                  }`}
+                                  style={{ backgroundColor: c.hex }}
+                                />
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
+                      <p className="text-[10px] font-bold text-gray-400">
+                        สีเปลี่ยนได้ฟรี แต่รูปทรงเปลี่ยนไม่ได้ อยากได้รูปทรงใหม่ไปดูที่ร้านค้า 🛍️
+                      </p>
+                    </div>
+                  )}
               </div>
             )}
           </div>

@@ -7,9 +7,15 @@ import {
   type EquipEntry,
   type ItemDesign,
   type Slot,
+  bodyParams,
+  effectiveDesign,
   resolveBase,
   shade,
 } from '@/lib/avatar'
+import { AgeMarks } from '@/components/avatar/aging'
+import { DragonPet } from '@/components/avatar/dragon'
+import { NewWeapon, isNewWeapon } from '@/components/avatar/weapons'
+import { NewPet, isNewPet } from '@/components/avatar/pets'
 
 // =====================================================================
 // 🏯 ตัวละครหนังจีนโบราณ — ฮ่องเต้ / ฮองเฮา / สนม / จอมยุทธ์ / ขุนนาง / แม่ทัพ / พระ / นักพรต
@@ -835,15 +841,21 @@ function Face({
   animate,
   uid,
   hairColor,
+  browMul = 1,
+  browColor,
 }: {
   eyes: string
   mouth: string
   animate: boolean
   uid: string
   hairColor: string
+  /** ความหนาคิ้วตามวัย (เด็กบาง วัยกลางคนเข้ม) */
+  browMul?: number
+  /** สีคิ้วบังคับ (ผู้เฒ่า = คิ้วหงอก) */
+  browColor?: string
 }) {
   const ink = INK
-  const brow = shade(hairColor || '#1f2937', -22)
+  const brow = browColor || shade(hairColor || '#1f2937', -22)
   const eyeStyle = animate ? { transformBox: 'fill-box' as const, transformOrigin: 'center', animation: `${uid}-blink 4.5s infinite` } : undefined
 
   const eyeAt = (x: number, k: string) => {
@@ -896,17 +908,17 @@ function Face({
   /* คิ้ว */
   const browsEl =
     eyes === 'sword' ? (
-      <g fill="none" stroke={brow} strokeWidth="4.4" strokeLinecap="round">
+      <g fill="none" stroke={brow} strokeWidth={4.4 * browMul} strokeLinecap="round">
         <path d="M71 90 L94 84" />
         <path d="M106 84 L129 90" />
       </g>
     ) : eyes === 'phoenix' ? (
-      <g fill="none" stroke={brow} strokeWidth="2.4" strokeLinecap="round">
+      <g fill="none" stroke={brow} strokeWidth={2.4 * browMul} strokeLinecap="round">
         <path d="M70 88 Q82 80 96 87" />
         <path d="M104 87 Q118 80 130 88" />
       </g>
     ) : (
-      <g fill="none" stroke={brow} strokeWidth="2.8" strokeLinecap="round" opacity=".85">
+      <g fill="none" stroke={brow} strokeWidth={2.8 * browMul} strokeLinecap="round" opacity=".85">
         <path d="M73 89 Q83 84 93 88" />
         <path d="M107 88 Q117 84 127 89" />
       </g>
@@ -1058,8 +1070,8 @@ function Hat({ d, ctx }: { d?: ItemDesign; ctx: Ctx }) {
       const { c1, c2, c3 } = pal(d, ['#1f2937', '#facc15', '#34d399'])
       return (
         <g>
-          <rect x="6" y="52" width="56" height="10" rx="5" fill={c1} stroke={shade(c1, 30)} strokeWidth="1" />
-          <rect x="138" y="52" width="56" height="10" rx="5" fill={c1} stroke={shade(c1, 30)} strokeWidth="1" />
+          <rect x="18" y="52" width="44" height="10" rx="5" fill={c1} stroke={shade(c1, 30)} strokeWidth="1" />
+          <rect x="138" y="52" width="44" height="10" rx="5" fill={c1} stroke={shade(c1, 30)} strokeWidth="1" />
           <path d="M60 70 Q56 34 100 32 Q144 34 140 70 Q100 62 60 70 Z" fill={c1} stroke={shade(c1, 30)} strokeWidth="1.2" />
           <path d="M60 66 Q100 58 140 66" fill="none" stroke={c2} strokeWidth="3.2" />
           <path d="M76 46 Q100 40 124 46" fill="none" stroke={shade(c1, 40)} strokeWidth="1.4" opacity=".5" />
@@ -1310,6 +1322,9 @@ function HandItem({ d }: { d?: ItemDesign }) {
   const raw = d?.shape || 'scroll'
   const shape = HAND_ALIAS[raw] || raw
 
+  // อาวุธแบบใหม่ + กระบี่/ดาบแบบประกอบชิ้นส่วน (มี design.variant) — ไอเทมเก่าที่ไม่มี variant ใช้ตัววาดเดิมด้านล่าง
+  if (isNewWeapon(shape, d)) return <NewWeapon shape={shape} d={d} />
+
   switch (shape) {
     /* กระบี่จีน (เจี้ยน) */
     case 'sword_chinese': {
@@ -1475,6 +1490,10 @@ const PET_ALIAS: Record<string, string> = { dog: 'lion', robot: 'rabbit', pengui
 function Pet({ d }: { d?: ItemDesign }) {
   const raw = d?.shape || 'cat'
   const shape = PET_ALIAS[raw] || raw
+  // สัตว์นักษัตร/สัตว์มงคลชนิดใหม่ (เสือ ม้า ลิง วัว ไก่ หมู ปลาคราฟ เต่าดำ จิ้งจอก)
+  if (isNewPet(shape)) return <NewPet shape={shape} d={d} />
+  // มังกรแบบประกอบชิ้นส่วน (head × body × element) — มังกรเก่าที่ไม่มี variant ใช้ตัววาดเดิม
+  if (shape === 'dragon' && d?.variant) return <DragonPet d={d} />
   const { c1, c2, c3 } = pal(d, ['#fbbf24', '#f59e0b', '#1f2937'])
   const ink = INK
 
@@ -1759,11 +1778,27 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
   const eq = (config.equip || {}) as Partial<Record<Slot, EquipEntry | null>>
   const ctx: Ctx = { skin: base.skin, skinDark: shade(base.skin, -9), uid }
 
-  const top = eq.outfit?.d || DEFAULT_TOP
-  const bottom = eq.pants?.d || DEFAULT_BOTTOM
-  const shoes = eq.shoes?.d || DEFAULT_SHOES
-  const viewBox = view === 'bust' ? '16 2 168 168' : '0 0 200 320'
-  const wingsOrCape = eq.back?.d
+  /* ---------- วัย + รูปร่าง: ย่อ/ขยายลำตัวรอบเท้า และหัวรอบคาง ---------- */
+  const bp = bodyParams(base)
+  const bodyTf = `translate(100 296) scale(${bp.sx} ${bp.sy}) translate(-100 -296)`
+  const headTf = `translate(100 ${142 + bp.drop}) scale(${bp.head / bp.sx} ${bp.head / bp.sy}) translate(-100 -142)`
+  const faceTf = bp.faceScale !== 1 ? `translate(100 108) scale(${bp.faceScale}) translate(-100 -108)` : undefined
+  const age = base.age
+  const hairC = age === 'elder' ? shade(base.hairColor, 62) : base.hairColor // ผู้เฒ่า = ผมหงอก
+  const browMul = age === 'child' ? 0.85 : age === 'adult' ? 1.3 : 1
+  const browColor = age === 'elder' ? '#9ca3af' : undefined
+  const chinY = 296 - (296 - 142 - bp.drop) * bp.sy
+  // ภาพ bust: เริ่มจากยอดหมวก/มวยผมสูงสุด (≈ 128 หน่วยเหนือคาง × ขนาดหัว) เผื่อขอบ 10
+  const bustY = Math.max(0, Math.round((chinY - 128 * bp.head - 10) * 10) / 10)
+
+  // design ของแต่ละช่อง หลังซ้อนสีที่เด็กเลือกเอง
+  const D = (s: Slot) => effectiveDesign(config, s)
+
+  const top = D('outfit') || DEFAULT_TOP
+  const bottom = D('pants') || DEFAULT_BOTTOM
+  const shoes = D('shoes') || DEFAULT_SHOES
+  const viewBox = view === 'bust' ? `16 ${bustY} 168 168` : '0 0 200 320'
+  const wingsOrCape = D('back')
 
   const fp = resolveFreePose(config)
   const lArmAttr = partTransformAttr(fp.lArm, 63, 156)
@@ -1800,7 +1835,10 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
   const angleOf = (part: PartKey, p: { x: number; y: number }, b: FreePoseConfig) => {
     const pv = PIVOT[part]
     if (!pv) return 0
-    return (Math.atan2(p.y - (pv[1] + b.body.y), p.x - (pv[0] + b.body.x)) * 180) / Math.PI
+    // จุดหมุนจริงบนจอ = พิกัดเดิมที่ผ่านการย่อ/ขยายตามวัยและรูปร่างแล้ว
+    const px = 100 + (pv[0] - 100) * bp.sx
+    const py = 296 - (296 - pv[1]) * bp.sy
+    return (Math.atan2(p.y - (py + b.body.y), p.x - (px + b.body.x)) * 180) / Math.PI
   }
   const startDrag = (e: ReactPointerEvent, part: PartKey, mode: 'rot' | 'move') => {
     if (!editable) return
@@ -1823,7 +1861,9 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
       let dx = p.x - d.start.x
       let dy = p.y - d.start.y
       if (d.part === 'hand') {
-        // ของในมืออยู่ในกลุ่มแขนขวา ต้องหมุนกลับตามมุมแขน
+        // ของในมืออยู่ในกลุ่มแขนขวา ต้องหมุนกลับตามมุมแขน (และชดเชยการย่อ/ขยายตามวัยก่อน)
+        dx /= bp.sx
+        dy /= bp.sy
         const a = (-d.base.rArm.deg * Math.PI) / 180
         ;[dx, dy] = [dx * Math.cos(a) - dy * Math.sin(a), dx * Math.sin(a) + dy * Math.cos(a)]
       }
@@ -1865,16 +1905,19 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
 
       <g style={animate ? { animation: `${uid}-bob 3.2s ease-in-out infinite` } : undefined}>
         {/* ---- สัตว์เลี้ยงมงคล (ขยับอิสระ) ---- */}
-        {view === 'full' && eq.pet?.d && (
+        {view === 'full' && D('pet') && (
           <g transform={petAttr} {...grab('pet', 'move')}>
-            <Pet d={eq.pet.d} />
+            <Pet d={D('pet')} />
           </g>
         )}
 
         {/* ---- กลุ่มลำตัว + ศีรษะ + แขนขา ---- */}
         <g transform={bodyAttr} {...grab('body', 'move')}>
+         <g transform={bodyTf}>
           {wingsOrCape && <BackItem d={wingsOrCape} ctx={ctx} />}
-          <HairBack style={base.hair} color={base.hairColor} />
+          <g transform={headTf}>
+            <HairBack style={base.hair} color={hairC} />
+          </g>
 
           {/* ขาซ้าย & ขาขวา */}
           <g transform={lLegAttr} {...grab('lLeg', 'rot')}>
@@ -1908,26 +1951,32 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
               <Arm top={top} skin={base.skin} />
             </g>
             {/* ของถือ: อยู่ในกลุ่มแขนขวา จึงเคลื่อนตามแขนเสมอ (ปรับเพิ่มได้อิสระ) */}
-            {eq.hand?.d && (
+            {D('hand') && (
               <g transform={handAttr} {...grab('hand', 'move')}>
-                <HandItem d={eq.hand.d} />
+                <HandItem d={D('hand')} />
               </g>
             )}
           </g>
 
           {wingsOrCape && <BackItemFront d={wingsOrCape} />}
 
-          {/* ศีรษะ */}
+          {/* ศีรษะ (ขนาดและตำแหน่งตามวัย) */}
+          <g transform={headTf}>
           <circle cx="54" cy="102" r="8" fill={base.skin} />
           <circle cx="146" cy="102" r="8" fill={base.skin} />
           <circle cx="54" cy="102" r="4" fill={ctx.skinDark} opacity=".5" />
           <circle cx="146" cy="102" r="4" fill={ctx.skinDark} opacity=".5" />
           <circle cx="100" cy="96" r="46" fill={base.skin} />
           <ellipse cx="86" cy="74" rx="14" ry="8" fill="#fff" opacity=".14" />
-          <Face eyes={base.eyes} mouth={base.mouth} animate={animate} uid={uid} hairColor={base.hairColor} />
-          <HairFront style={base.hair} color={base.hairColor} />
-          {eq.glasses?.d && <Glasses d={eq.glasses.d} />}
-          {eq.hat?.d && <Hat d={eq.hat.d} ctx={ctx} />}
+          <g transform={faceTf}>
+            <Face eyes={base.eyes} mouth={base.mouth} animate={animate} uid={uid} hairColor={hairC} browMul={browMul} browColor={browColor} />
+          </g>
+          <AgeMarks age={age} skinDark={ctx.skinDark} />
+          <HairFront style={base.hair} color={hairC} />
+          {D('glasses') && <Glasses d={D('glasses')} />}
+          {D('hat') && <Hat d={D('hat')} ctx={ctx} />}
+          </g>
+         </g>
         </g>
       </g>
       {/* ประกายออร่าระดับจักรพรรดิ เมื่อใส่ไอเทมที่มี glow: true */}

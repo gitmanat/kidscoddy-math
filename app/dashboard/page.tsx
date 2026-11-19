@@ -151,7 +151,7 @@ function AvatarBgLayer({ bg }: { bg: ResolvedAvatarBg }) {
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={bg.imageUrl}
-          alt="avatar background"
+          //alt="avatar background"
           className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none z-0"
         />
       )}
