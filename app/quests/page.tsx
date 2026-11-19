@@ -91,7 +91,7 @@ export default function SpecialQuestsPage() {
       const loadedQuests = questData || []
       setQuests(loadedQuests)
 
-      // 2. ดึงประวัติการทำภารกิจทั้งหมดของนักเรียนทุกคน พร้อมข้อมูลโปรไฟล์
+      // 2. ดึงประวัติการทำภารกิจทั้งหมดของนักเรียนทุกคน พร้อมข้อมูลโปรไฟล์ (เพิ่ม avatar_config เหมือนหน้า Dashboard)
       const { data: allQuestComps } = await supabase
         .from('quest_completions')
         .select(`
@@ -101,6 +101,7 @@ export default function SpecialQuestsPage() {
           users (
             id,
             display_name,
+            avatar_config,
             avatar_url,
             equipped_outfit
           )
@@ -149,6 +150,7 @@ export default function SpecialQuestsPage() {
               ...userObj,
               coinsEarned: totalCoinsEarned,
               isPerfect: setScoreInfo.total > 0 && setScoreInfo.score === setScoreInfo.total,
+              completedAt: item.completed_at,
             })
           }
         })
@@ -423,7 +425,7 @@ export default function SpecialQuestsPage() {
               })}
             </div>
             <p className="text-[10px] text-gray-400 font-bold mt-2 text-center">
-              ✅ พิชิตครบแล้ว &nbsp;•&nbsp; 🔥N = ทำได้อีก N ภารกิจ &nbsp;•&nbsp; 🔒 ยังไม่เปิด &nbsp;•&nbsp; ⌛ หมดเขตแล้ว &nbsp;•&nbsp; · = ไม่มีภารกิจ
+              ✅ พิชิตครบแล้ว  •  🔥N = ทำได้อีก N ภารกิจ  •  🔒 ยังไม่เปิด  •  ⌛ หมดเขตแล้ว  •  · = ไม่มีภารกิจ
             </p>
           </div>
         </div>

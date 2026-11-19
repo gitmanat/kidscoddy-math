@@ -1,6 +1,8 @@
 'use client'
 
-import { AvatarDisplay, CompletedAvatarsBadge } from '@/components/AvatarDisplay'
+import { CompletedAvatarsBadge } from '@/components/AvatarDisplay'
+import { CharacterSvg } from '@/components/Character'
+import { readAvatarConfig } from '@/lib/avatar'
 import { useEffect, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
@@ -59,24 +61,18 @@ export default function StudentDashboard() {
 
   const [sosPendingCount, setSosPendingCount] = useState(0)
   const [specialSetIds, setSpecialSetIds] = useState<string[]>([])
-  // 1. สร้าง State สำหรับเก็บข้อมูลการทำข้อสอบแยกตาม set_id
   const [completionsBySet, setCompletionsBySet] = useState<Record<string, any[]>>({})
 
-  // 🔍 State สำหรับระบบค้นหาและกรองหมวดหมู่
   const [searchQuery, setSearchQuery] = useState('')
   const [selectedGroup, setSelectedGroup] = useState('all')
-  // สถานะแท็บกรองความคืบหน้า: 'todo' (ต้องลุย/ยังไม่เต็ม), 'perfect' (เต็มแล้ว), 'all' (ทั้งหมด)
   const [statusTab, setStatusTab] = useState<'todo' | 'perfect' | 'all'>('todo')
-  // ควบคุมการแสดงผลเริ่มต้นไม่ให้ยาวเกินไป (แสดงทีละ 4 ชุด)
   const [showAllSets, setShowAllSets] = useState(false)
   const [todayStr, setTodayStr] = useState('')
-  // 📅 วันที่ที่เลือกดู (ค่าเริ่มต้น = วันนี้) และโหมดดู: รายวัน / ภารกิจค้างจากวันก่อนๆ
   const [selectedDate, setSelectedDate] = useState('')
   const [viewMode, setViewMode] = useState<'day' | 'backlog'>('day')
   const [unreadCount, setUnreadCount] = useState(0)
 
   useEffect(() => {
-    // กำหนดวันที่ปัจจุบัน (เวลาท้องถิ่น) เฉพาะฝั่ง Client ป้องกัน Error Prerender
     const t = toLocalDateStr(new Date())
     setTodayStr(t)
     setSelectedDate(t)
@@ -91,18 +87,16 @@ export default function StudentDashboard() {
     const userData = JSON.parse(storedUser)
     setStudent(userData)
     
-    // ตั้งค่าตัวกรองเริ่มต้นตามระดับชั้นของนักเรียน (ถ้ามี)
     if (userData.group_name) {
       setSelectedGroup(userData.group_name)
     }
     
     fetchDashboardData(userData.id)
-    fetchCompletionsData() // 👈 เพิ่มบรรทัดนี้เพื่อสั่งให้โหลดข้อมูลเพื่อนที่ทำแล้ว
+    fetchCompletionsData()
   }, [router])
 
   const fetchDashboardData = async (userId: string) => {
     try {
-      // 1. ดึงข้อมูลล่าสุดของนักเรียน
       const { data: latestUser } = await supabase
         .from('users')
         .select('*')
@@ -114,7 +108,6 @@ export default function StudentDashboard() {
         localStorage.setItem('kidscoddy_user', JSON.stringify(latestUser))
       }
 
-      // ดึงรหัสชุดโจทย์ที่เป็นภารกิจพิเศษ เพื่อนำมาคัดกรองไม่ให้แสดงปะปนกับแบบฝึกหัดทั่วไป
       const { data: specialQuestsData } = await supabase
         .from('special_quests')
         .select('target_set_id')
@@ -125,7 +118,6 @@ export default function StudentDashboard() {
         setSpecialSetIds(ids)
       }
 
-      // 2. ดึงชุดแบบฝึกหัดทั้งหมด
       const { data: setsData } = await supabase
         .from('problem_sets')
         .select('*')
@@ -133,7 +125,6 @@ export default function StudentDashboard() {
 
       setProblemSets(setsData || [])
 
-      // 3. ดึงรายการข้อสอบทั้งหมดมานับจำนวนข้อจริง
       const { data: allProbs } = await supabase
         .from('problems')
         .select('id, set_id')
@@ -145,7 +136,6 @@ export default function StudentDashboard() {
         })
       }
 
-      // 4. ดึงข้อมูลคอมพลีตของตัวเอง
       const { data: compData } = await supabase
         .from('set_completions')
         .select('set_id, stars, score, total_questions')
@@ -174,10 +164,9 @@ export default function StudentDashboard() {
       }
       setCompletions(compMap)
 
-      // 5. ดึงข้อมูล Leaderboard (รวมชิ้นส่วนอวตารทั้งหมดของเพื่อนๆ)
       const { data: allStudents } = await supabase
         .from('users')
-        .select('id, display_name, group_name, xp, level, streak_days, avatar_url, avatar_frame, equipped_title, equipped_hat, equipped_glasses, equipped_bg')
+        .select('id, display_name, group_name, xp, level, streak_days, avatar_config, avatar_url, avatar_frame, equipped_title, equipped_hat, equipped_glasses, equipped_bg')
         .eq('role', 'student')
 
       if (allStudents) {
@@ -185,7 +174,6 @@ export default function StudentDashboard() {
         setLeaderboard(rankedList)
       }
 
-      // 7. นับจำนวนเคส SOS ที่ยังค้างอยู่ (สำหรับแอดมิน)
       if (latestUser?.role === 'admin') {
         const { count: sosCount } = await supabase
           .from('student_sos_requests')
@@ -195,7 +183,6 @@ export default function StudentDashboard() {
         setSosPendingCount(sosCount || 0)
       }
 
-      // 6. นับจำนวนจดหมายที่ยังไม่ได้เปิดอ่าน
       const { count } = await supabase
         .from('student_messages')
         .select('*', { count: 'exact', head: true })
@@ -210,7 +197,6 @@ export default function StudentDashboard() {
     }
   }
 
-  // 2. ฟังก์ชันดึงประวัติการทำแบบฝึกหัดทั้งหมด
   const fetchCompletionsData = async () => {
       try {
         const { data: completionsData, error } = await supabase
@@ -223,6 +209,7 @@ export default function StudentDashboard() {
             users (
               id,
               display_name,
+              avatar_config,
               avatar_url,
               equipped_outfit
             )
@@ -238,7 +225,6 @@ export default function StudentDashboard() {
             if (!grouped[item.set_id]) {
               grouped[item.set_id] = []
             }
-            // รองรับกรณี Supabase คืนค่า users เป็น Object หรือ Array
             const userObj = Array.isArray(item.users) ? item.users[0] : item.users
             if (userObj) {
               grouped[item.set_id].push({
@@ -255,7 +241,6 @@ export default function StudentDashboard() {
       }
   }
 
-  // 🔍 ขั้นที่ 1: กรองด้วยคำค้นหา + ระดับชั้น (ซ่อนภารกิจพิเศษไม่ให้ปะปนกับรายวัน)
   const baseSets = useMemo(() => {
     const q = searchQuery.toLowerCase()
     return problemSets.filter((set) => {
@@ -272,7 +257,6 @@ export default function StudentDashboard() {
     })
   }, [problemSets, specialSetIds, searchQuery, selectedGroup])
 
-  // 📅 สรุปรายวัน: วันไหนมีกี่ชุด เต็ม 100% แล้วกี่ชุด (ใช้ทำแถบเลือกวัน)
   const dateSummary = useMemo(() => {
     const map: Record<string, { total: number; perfect: number }> = {}
     baseSets.forEach((set) => {
@@ -288,11 +272,9 @@ export default function StudentDashboard() {
   const sortedDates = useMemo(() => Object.keys(dateSummary).sort(), [dateSummary])
   const activeDate = selectedDate || todayStr
   const daySummary = dateSummary[activeDate] || { total: 0, perfect: 0 }
-  // วันก่อนหน้า/ถัดไปที่ "มีการบ้านจริง" (ข้ามวันว่าง รองรับการบ้านเป็นร้อยวัน)
   const prevHomeworkDate = [...sortedDates].reverse().find((d) => d < activeDate)
   const nextHomeworkDate = sortedDates.find((d) => d > activeDate)
 
-  // ⚠️ ภารกิจค้าง = ชุดของวันก่อนวันนี้ที่ยังไม่เต็ม 100%
   const backlogSets = useMemo(() => {
     if (!todayStr) return []
     return baseSets.filter((set) => {
@@ -305,12 +287,11 @@ export default function StudentDashboard() {
     [backlogSets]
   )
 
-  // 👩‍🏫 แอดมินเปลี่ยน "วันของการบ้าน" ได้จากการ์ดโดยตรง (บันทึกลง problem_sets.target_date)
   const isAdmin = student?.role === 'admin'
   const handleChangeSetDate = async (setId: string, newDate: string) => {
     const { error } = await supabase.from('problem_sets').update({ target_date: newDate }).eq('id', setId)
     if (error) {
-      alert(`เปลี่ยนวันไม่สำเร็จ: ${error.message}\n(ถ้ายังไม่ได้เพิ่มคอลัมน์ target_date ให้รันไฟล์ add_target_date.sql ก่อน)`)
+      alert(`เปลี่ยนวันไม่สำเร็จ: ${error.message}`)
       return
     }
     setProblemSets((prev) => prev.map((s) => (s.id === setId ? { ...s, target_date: newDate } : s)))
@@ -322,7 +303,6 @@ export default function StudentDashboard() {
     setShowAllSets(false)
   }
 
-  // 🎯 ขั้นที่ 2: เลือกชุดที่จะแสดง (ตามวัน + แท็บสถานะ หรือโหมดภารกิจค้าง) แล้วจัดเรียง
   const filteredProblemSets = useMemo(() => {
     let list: any[]
     if (viewMode === 'backlog') {
@@ -337,7 +317,6 @@ export default function StudentDashboard() {
       })
     }
 
-    // ทำค้างไว้ขึ้นก่อน → ยังไม่เริ่ม → เต็มแล้ว (กระตุ้นให้เก็บให้จบ)
     const rank = (set: any) => {
       const p = getProgress(completions[set.id] || EMPTY_COMPLETION)
       return p.isInProgress ? 0 : p.isPerfect ? 2 : 1
@@ -351,7 +330,6 @@ export default function StudentDashboard() {
     })
   }, [baseSets, backlogSets, viewMode, activeDate, statusTab, completions])
 
-  // ตัดรายการให้แสดงแค่ 4 ชุดแรกถ้ายังไม่ได้กด "ดูทั้งหมด"
   const displayedProblemSets = showAllSets ? filteredProblemSets : filteredProblemSets.slice(0, 4)
   const hasFilter = searchQuery.trim() !== '' || selectedGroup !== 'all'
   const dayProgressPct = daySummary.total > 0 ? (daySummary.perfect / daySummary.total) * 100 : 0
@@ -401,7 +379,6 @@ export default function StudentDashboard() {
                   ✉️ ส่งจดหมาย
                 </button>
 
-                {/* 🚨 ปุ่มจัดการ SOS (จะกระพริบและแสดงตัวเลขเฉพาะตอนมีเด็กส่ง SOS ค้างอยู่) */}
                 <button
                   onClick={() => router.push('/admin/sos')}
                   className={`relative px-3.5 py-2 text-xs font-extrabold rounded-xl transition cursor-pointer shadow-sm flex items-center gap-1.5 ${
@@ -421,7 +398,6 @@ export default function StudentDashboard() {
               </>
             )}
 
-            {/* 🎯 ปุ่มทางลัดไปกระดานภารกิจพิเศษบน Header */}
             <button
               onClick={() => router.push('/quests')}
               className="px-3.5 py-2 bg-rose-100 hover:bg-rose-200 text-rose-700 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1 shadow-xs"
@@ -450,7 +426,6 @@ export default function StudentDashboard() {
               🛒 ร้านค้าไอเทม
             </button>
 
-            {/* 🎨 ปุ่มทางลัดไปหน้าโปรไฟล์และแต่งตัวละคร */}
             <button
               onClick={() => router.push('/profile')}
               className="px-3.5 py-2 bg-purple-100 hover:bg-purple-200 text-purple-700 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1 shadow-xs"
@@ -474,9 +449,7 @@ export default function StudentDashboard() {
 
       <main className="max-w-5xl mx-auto px-6 mt-8 space-y-8">
         
-        {/* =====================================================================
-            ส่วนที่ 1: Gamification Profile Card (Level, Streak, Coins, XP)
-            ===================================================================== */}
+        {/* ส่วนที่ 1: Gamification Profile Card */}
         <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 md:p-8 text-white shadow-xl relative overflow-visible">
           <div className="absolute inset-0 overflow-hidden rounded-3xl pointer-events-none">
             <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12" />
@@ -484,49 +457,55 @@ export default function StudentDashboard() {
 
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-6 relative z-10">
             
-            {/* 🎨 แสดง AvatarDisplay แบบครบทุกเลเยอร์ พร้อมคลิกไปหน้าแต่งตัว */}
-            <div className="flex items-center gap-5 pt-2">
-              <AvatarDisplay
-                user={student}
-                size="md"
+            {/* แสดงตัวละครเต็มตัว + สัตว์เลี้ยง */}
+            <div className="flex flex-col sm:flex-row items-center gap-5 pt-1">
+              <div
                 onClick={() => router.push('/profile')}
-              />
+                title="คลิกเพื่อเข้าห้องแต่งตัวละคร"
+                className="group relative w-32 h-40 sm:w-36 sm:h-44 rounded-3xl overflow-hidden shadow-xl border-2 border-white/40 cursor-pointer shrink-0 transition-transform hover:scale-105 bg-white/10"
+              >
+                <CharacterSvg
+                  config={readAvatarConfig(student)}
+                  animate={true}
+                  className="w-full h-full"
+                />
+                <span className="absolute bottom-1.5 left-1/2 -translate-x-1/2 px-2.5 py-0.5 rounded-full bg-black/60 backdrop-blur-xs text-[10px] font-black text-white opacity-90 group-hover:bg-amber-400 group-hover:text-gray-900 transition whitespace-nowrap">
+                  🎨 แต่งตัว
+                </span>
+              </div>
 
-              <div className="space-y-1.5">
-                <div className="flex flex-wrap items-center gap-2">
+              <div className="space-y-1.5 text-center sm:text-left">
+                <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
                   <span className="px-3 py-0.5 bg-white/20 backdrop-blur-md rounded-full text-xs font-extrabold">
                     ⭐ Level {currentLevel}
                   </span>
                   <span className="text-xs font-bold text-purple-200">
-                    {student?.equipped_title || getLevelTitle(currentLevel)}
+                    {readAvatarConfig(student).equip?.title?.name || student?.equipped_title || getLevelTitle(currentLevel)}
                   </span>
                 </div>
                 <h2 className="text-xl md:text-2xl font-black">
                   สู้ๆ นะครับ, {student?.display_name}! 🚀
                 </h2>
                 <p className="text-xs text-purple-100">
-                  สะสม XP เลเวลอัป และเก็บ Coins ไปแลกรางวัลจริงกัน! (คลิกที่ตัวละครเพื่อแต่งตัว)
+                  สะสม XP เลเวลอัป และเก็บ Coins ไปแต่งตัวและแลกรางวัลกัน! (คลิกที่ตัวละครเพื่อแต่งตัว)
                 </p>
               </div>
             </div>
 
             {/* สถิติ Streak, Coins, XP */}
             <div className="grid grid-cols-3 gap-2 w-full md:w-auto">
-              {/* Streak */}
               <div className="bg-white/15 backdrop-blur-md border border-white/25 px-3 py-2.5 rounded-2xl flex flex-col items-center justify-center text-center">
                 <span className="text-xl animate-pulse">🔥</span>
                 <span className="text-[10px] uppercase tracking-wider text-amber-200 font-extrabold mt-0.5">Streak</span>
                 <span className="text-sm font-black">{student?.streak_days || 0} วัน</span>
               </div>
 
-              {/* Coins */}
               <div className="bg-white/15 backdrop-blur-md border border-white/25 px-3 py-2.5 rounded-2xl flex flex-col items-center justify-center text-center">
                 <CoinIcon className="w-6 h-6 shrink-0 drop-shadow" />
                 <span className="text-[10px] uppercase tracking-wider text-yellow-200 font-extrabold mt-0.5">เหรียญ</span>
                 <span className="text-sm font-black">{student?.coins || 0}</span>
               </div>
 
-              {/* XP */}
               <div className="bg-white/15 backdrop-blur-md border border-white/25 px-3 py-2.5 rounded-2xl flex flex-col items-center justify-center text-center">
                 <span className="text-xl">✨</span>
                 <span className="text-[10px] uppercase tracking-wider text-purple-200 font-extrabold mt-0.5">XP</span>
@@ -535,7 +514,6 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          {/* หลอดพลัง XP Progress Bar */}
           <div className="mt-6 pt-4 border-t border-white/20 relative z-10">
             <div className="flex justify-between items-center text-xs font-bold mb-1.5">
               <span>หลอดเลเวล {currentLevel} (XP สะสมในเลเวลนี้)</span>
@@ -550,9 +528,7 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* =====================================================================
-            ส่วนเสริม: ทางลัดสู่กระดานภารกิจพิเศษ (Special Quests Banner)
-            ===================================================================== */}
+        {/* ภารกิจพิเศษ */}
         <div 
           onClick={() => router.push('/quests')}
           className="bg-gradient-to-r from-rose-500 via-pink-500 to-purple-600 rounded-3xl p-6 text-white shadow-xl cursor-pointer hover:scale-[1.01] transition transform flex flex-col md:flex-row justify-between items-center gap-4 relative overflow-hidden"
@@ -580,9 +556,7 @@ export default function StudentDashboard() {
           </div>
         </div>
 
-        {/* =====================================================================
-            ส่วนที่ 2: ภารกิจฝึกฝนคณิตศาสตร์ (เลือกดูรายวัน + ภารกิจค้าง)
-            ===================================================================== */}
+        {/* ส่วนที่ 2: ภารกิจฝึกฝนคณิตศาสตร์ */}
         <div className="space-y-4">
           <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
             <div>
@@ -594,7 +568,6 @@ export default function StudentDashboard() {
             </span>
           </div>
 
-          {/* 📅 การ์ดเลือกวัน */}
           <div className="bg-white/95 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-indigo-100 space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2">
@@ -651,7 +624,6 @@ export default function StudentDashboard() {
               </div>
             </div>
 
-            {/* ความคืบหน้าของวันที่เลือก */}
             <div>
               <div className="flex justify-between items-center text-xs font-bold mb-1.5">
                 <span className="text-gray-600">
@@ -671,7 +643,6 @@ export default function StudentDashboard() {
               </div>
             </div>
 
-            {/* แถบ 7 วันรอบวันที่เลือก */}
             <div>
               <div className="grid grid-cols-7 gap-1.5">
                 {[-3, -2, -1, 0, 1, 2, 3].map((offset) => {
@@ -703,12 +674,11 @@ export default function StudentDashboard() {
                 })}
               </div>
               <p className="text-[10px] text-gray-400 font-bold mt-2 text-center">
-                ✅ ทำเต็มครบแล้ว &nbsp;•&nbsp; 🔥N = ยังเหลือ N ชุด &nbsp;•&nbsp; · = ไม่มีการบ้าน
+                ✅ ทำเต็มครบแล้ว  •  🔥N = ยังเหลือ N ชุด  •  · = ไม่มีการบ้าน
               </p>
             </div>
           </div>
 
-          {/* ⚠️ แบนเนอร์ภารกิจค้างจากวันก่อนๆ */}
           {viewMode === 'day' && backlogSets.length > 0 && (
             <button
               onClick={() => {
@@ -723,21 +693,7 @@ export default function StudentDashboard() {
               <span className="text-xs font-black text-amber-700">ดูงานค้าง →</span>
             </button>
           )}
-          {viewMode === 'backlog' && (
-            <div className="w-full flex flex-wrap items-center justify-between gap-2 px-5 py-3.5 bg-amber-50 border border-amber-300 rounded-2xl">
-              <span className="text-sm font-extrabold text-amber-800">
-                📚 กำลังดูภารกิจที่ค้างจากวันก่อนๆ (ยังไม่ทำ / ยังไม่เต็ม 100%)
-              </span>
-              <button
-                onClick={() => goToDate(todayStr)}
-                className="px-3.5 py-2 bg-white hover:bg-amber-100 border border-amber-300 text-amber-800 text-xs font-black rounded-xl transition cursor-pointer"
-              >
-                ← กลับไปดูรายวัน
-              </button>
-            </div>
-          )}
 
-          {/* 🔍 แถบค้นหาและตัวกรองหมวดหมู่ */}
           <div className="bg-white/95 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-indigo-100 flex flex-col md:flex-row gap-3 items-center justify-between">
             <input
               type="text"
@@ -764,7 +720,6 @@ export default function StudentDashboard() {
             </div>
           </div>
 
-          {/* แถบเลือกแท็บสถานะ (ต้องลุย / เต็ม 100% / ทั้งหมด) — ใช้เฉพาะโหมดรายวัน */}
           {viewMode === 'day' && (
             <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
               <div className="flex flex-wrap bg-white/90 p-1.5 rounded-2xl border border-indigo-100 shadow-xs gap-1">
@@ -806,45 +761,10 @@ export default function StudentDashboard() {
             </div>
           )}
 
-          {/* ส่วนแสดงการ์ด */}
           {filteredProblemSets.length === 0 ? (
             <div className="bg-white/85 rounded-3xl p-12 text-center border border-indigo-100 shadow-sm space-y-3">
-              {viewMode === 'backlog' ? (
-                <>
-                  <span className="text-4xl">🎉</span>
-                  <p className="text-gray-700 font-black">เก่งมาก! ไม่มีภารกิจค้างเลย</p>
-                </>
-              ) : daySummary.total === 0 ? (
-                <>
-                  <span className="text-4xl">{hasFilter ? '🔍' : '📭'}</span>
-                  <p className="text-gray-700 font-black">
-                    {hasFilter ? 'ไม่พบชุดแบบฝึกหัดที่คุณค้นหาในวันนี้' : 'ไม่มีการบ้านในวันที่เลือก'}
-                  </p>
-                  <p className="text-xs text-gray-400">
-                    {hasFilter
-                      ? 'ลองเปลี่ยนคำค้นหา หรือเลือกระดับชั้นอื่นดูครับ'
-                      : 'เลือกวันอื่นจากแถบด้านบน หรือกดลูกศรเพื่อข้ามไปวันที่มีการบ้าน'}
-                  </p>
-                  {!hasFilter && prevHomeworkDate && (
-                    <button
-                      onClick={() => goToDate(prevHomeworkDate)}
-                      className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-xl transition cursor-pointer"
-                    >
-                      ไปดูวันล่าสุดที่มีการบ้าน ({formatThaiDate(prevHomeworkDate, { day: 'numeric', month: 'short' })})
-                    </button>
-                  )}
-                </>
-              ) : statusTab === 'todo' ? (
-                <>
-                  <span className="text-4xl">🎉</span>
-                  <p className="text-gray-700 font-black">เก่งมาก! ทำเต็ม 100% ครบทุกชุดของวันนี้แล้ว</p>
-                </>
-              ) : (
-                <>
-                  <span className="text-4xl">🎯</span>
-                  <p className="text-gray-700 font-black">ยังไม่มีชุดที่เต็ม 100% — ลุยกันเลย!</p>
-                </>
-              )}
+              <span className="text-4xl">🎉</span>
+              <p className="text-gray-700 font-black">ไม่มีภารกิจค้าง หรือทำครบหมดแล้ว!</p>
             </div>
           ) : (
             <div className="grid gap-6 md:grid-cols-2">
@@ -863,88 +783,29 @@ export default function StudentDashboard() {
                         : 'bg-gradient-to-br from-indigo-500 via-purple-500 to-fuchsia-500 border-transparent shadow-xl shadow-indigo-300/60 hover:-translate-y-1 hover:shadow-2xl'
                     }`}
                   >
-                    {/* ลวดลายตกแต่ง: ชุดที่ยังต้องทำ = พื้นสีสด / ชุดที่เต็มแล้ว = พื้นเขียวอ่อน */}
-                    {isPerfect ? (
-                      <div className="absolute top-0 left-0 right-0 h-1.5 bg-emerald-500 pointer-events-none" />
-                    ) : (
-                      <>
-                        <div className="absolute right-0 top-0 bottom-0 w-1/3 bg-white/10 skew-x-12 pointer-events-none" />
-                        <div className="absolute -right-4 -bottom-6 text-9xl opacity-10 select-none pointer-events-none rotate-12">
-                          {isInProgress ? '🔥' : '🚀'}
-                        </div>
-                      </>
-                    )}
-
                     <div className="relative z-10">
                       <div className="flex justify-between items-start mb-3 gap-2">
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className="px-3.5 py-1 bg-white/90 text-indigo-700 text-xs font-black rounded-full shadow-sm">
-                            {set.target_group || 'ทั่วไป'}
-                          </span>
-                          {/* โหมดงานค้าง: แสดงวันที่ของการบ้าน กดเพื่อไปดูวันนั้นได้ */}
-                          {viewMode === 'backlog' && getSetDate(set) && (
-                            <button
-                              onClick={() => goToDate(getSetDate(set))}
-                              title="ไปดูการบ้านวันนั้น"
-                              className="px-2.5 py-1 bg-amber-50 hover:bg-amber-100 text-amber-700 border border-amber-200 text-[11px] font-extrabold rounded-full transition cursor-pointer"
-                            >
-                              📅 {formatThaiDate(getSetDate(set), { day: 'numeric', month: 'short', year: '2-digit' })}
-                            </button>
-                          )}
-                        </div>
+                        <span className="px-3.5 py-1 bg-white/90 text-indigo-700 text-xs font-black rounded-full shadow-sm">
+                          {set.target_group || 'ทั่วไป'}
+                        </span>
 
-                        {/* ป้ายแสดงสถานะคะแนน 3 ระดับ */}
-                        <div
-                          className={`flex flex-col items-end px-3.5 py-1.5 rounded-2xl border shrink-0 ${
-                            isPerfect
-                              ? 'bg-emerald-50 border-emerald-200'
-                              : 'bg-white/95 border-white shadow-md'
-                          }`}
-                        >
-                          <div
-                            className={`flex items-center gap-1 font-black text-sm ${
-                              isPerfect
-                                ? 'text-emerald-700'
-                                : isInProgress
-                                ? 'text-amber-700'
-                                : 'text-purple-700'
-                            }`}
-                          >
-                            <span>{isPerfect ? '👑' : isInProgress ? '⚡' : '✨'}</span>
+                        <div className={`flex flex-col items-end px-3.5 py-1.5 rounded-2xl border shrink-0 ${isPerfect ? 'bg-emerald-50 border-emerald-200' : 'bg-white/95 border-white shadow-md'}`}>
+                          <div className={`flex items-center gap-1 font-black text-sm ${isPerfect ? 'text-emerald-700' : 'text-purple-700'}`}>
+                            <span>{isPerfect ? '👑' : '✨'}</span>
                             <span>{comp.score || 0} / {comp.total} คะแนน</span>
                           </div>
-                          <span
-                            className={`text-[10px] font-extrabold mt-0.5 ${
-                              isPerfect
-                                ? 'text-emerald-600'
-                                : isInProgress
-                                ? 'text-orange-600 animate-pulse'
-                                : 'text-purple-400'
-                            }`}
-                          >
-                            {isPerfect
-                              ? '✓ สมบูรณ์แบบ 100%'
-                              : isInProgress
-                              ? `ขาดอีก ${missingPoints} ข้อจะเต็ม!`
-                              : '⏳ รอทำภารกิจ'}
-                          </span>
                         </div>
                       </div>
 
-                      <h3
-                        className={`text-xl md:text-2xl font-black mb-2 transition ${
-                          isPerfect ? 'text-gray-800 group-hover:text-emerald-700' : 'text-white drop-shadow-sm'
-                        }`}
-                      >
+                      <h3 className={`text-xl md:text-2xl font-black mb-2 ${isPerfect ? 'text-gray-800' : 'text-white'}`}>
                         {set.title}
                       </h3>
                       <p className={`text-sm mb-4 line-clamp-2 ${isPerfect ? 'text-gray-500' : 'text-white/90'}`}>
-                        {set.description || 'ไม่มีคำอธิบายสำหรับชุดโจทย์นี้'}
+                        {set.description || 'ไม่มีคำอธิบาย'}
                       </p>
 
-                      {/* 👩‍🏫 เฉพาะแอดมิน: ย้าย/เปลี่ยนวันของการบ้านชุดนี้ */}
                       {isAdmin && (
-                        <div className={`mb-4 p-2.5 rounded-2xl ${isPerfect ? 'bg-white/70 border border-dashed border-emerald-200' : 'bg-white/90'}`}>
+                        <div className="mb-4 p-2.5 rounded-2xl bg-white/90">
                           <AssignDateField
                             compact
                             label="📅 วันของการบ้าน"
@@ -955,7 +816,6 @@ export default function StudentDashboard() {
                       )}
                     </div>
 
-                    {/* 🪙 แทรก Badge แสดงรูปเพื่อนที่ทำแล้วตรงนี้ */}
                     <div className="relative z-10">
                       <CompletedAvatarsBadge completedUsers={completionsBySet[set.id] || []} />
                     </div>
@@ -964,43 +824,21 @@ export default function StudentDashboard() {
                       onClick={() => router.push(`/practice/${set.id}`)}
                       className={`relative z-10 w-full py-3.5 font-extrabold rounded-2xl shadow-lg transition transform active:scale-95 cursor-pointer text-center ${
                         isPerfect
-                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-200'
-                          : isInProgress
-                          ? 'bg-white hover:bg-orange-50 text-orange-600 text-base shadow-orange-900/20'
-                          : 'bg-white hover:bg-indigo-50 text-indigo-700 text-base shadow-indigo-900/20'
+                          ? 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                          : 'bg-white hover:bg-indigo-50 text-indigo-700'
                       }`}
                     >
-                      {isPerfect
-                        ? '🔄 ทบทวนบทเรียน'
-                        : isInProgress
-                        ? `🔥 ลุยเก็บอีก ${missingPoints} ข้อให้เต็ม 100%!`
-                        : '🚀 เริ่มลุยภารกิจวันนี้!'}
+                      {isPerfect ? '🔄 ทบทวนบทเรียน' : '🚀 เริ่มลุยภารกิจวันนี้!'}
                     </button>
                   </div>
                 )
               })}
             </div>
           )}
-
-          {/* ปุ่มกดดูเพิ่มเติม / ย่อรายการ (ช่วยไม่ให้หน้ายาวเกินไปจนบัง Leaderboard) */}
-          {filteredProblemSets.length > 4 && (
-            <div className="flex justify-center pt-2">
-              <button
-                onClick={() => setShowAllSets(!showAllSets)}
-                className="px-6 py-3 bg-white hover:bg-indigo-50 text-indigo-700 border border-indigo-200 font-black text-xs rounded-2xl shadow-sm transition cursor-pointer flex items-center gap-2"
-              >
-                {showAllSets ? (
-                  <span>▲ ย่อรายการให้สั้นลง (เพื่อดู Leaderboard ด้านล่าง)</span>
-                ) : (
-                  <span>▼ แสดงภารกิจทั้งหมดในหมวดนี้ (เหลืออีก {filteredProblemSets.length - 4} ชุด)</span>
-                )}
-              </button>
-            </div>
-          )}
         </div>
 
         {/* =====================================================================
-            ส่วนที่ 3: กระดานผู้นำ (Leaderboard)
+            ส่วนที่ 3: กระดานผู้นำ (Leaderboard / แรงค์) — แสดงตัวละครเต็มตัว + สัตว์เลี้ยง + ฉายา
             ===================================================================== */}
         <div className="bg-white/95 backdrop-blur-sm p-6 md:p-8 rounded-3xl shadow-md border border-indigo-100">
           <div className="flex items-center justify-between mb-4">
@@ -1025,6 +863,9 @@ export default function StudentDashboard() {
                 else if (index === 1) rankBadge = 'bg-slate-300 text-white font-black'
                 else if (index === 2) rankBadge = 'bg-amber-700 text-white font-black'
 
+                const friendConfig = readAvatarConfig(item)
+                const friendTitle = friendConfig.equip?.title?.name || item.equipped_title || '🌱 นักคำนวณฝึกหัด'
+
                 return (
                   <div
                     key={index}
@@ -1032,13 +873,22 @@ export default function StudentDashboard() {
                       isMe ? 'bg-indigo-50/90 border-indigo-300 ring-2 ring-indigo-200 shadow-sm' : 'bg-gray-50/50 border-gray-100'
                     }`}
                   >
-                    <div className="flex items-center gap-3.5">
+                    <div className="flex items-center gap-4">
                       <div className={`w-8 h-8 rounded-xl font-black text-xs flex items-center justify-center shrink-0 ${rankBadge}`}>
                         {index + 1}
                       </div>
 
-                      {/* 🏆 แสดงตัวละครของเพื่อนๆ ครบทุกชิ้นส่วน */}
-                      <AvatarDisplay user={item} size="sm" showLevel={true} />
+                      {/* 🏆 แสดงตัวละครเต็มตัว + สัตว์เลี้ยงของเพื่อนๆ */}
+                      <div className="relative w-16 h-20 sm:w-20 sm:h-24 rounded-2xl overflow-hidden shadow-sm border border-indigo-100 shrink-0 bg-white">
+                        <CharacterSvg
+                          config={friendConfig}
+                          animate={index < 3}
+                          className="w-full h-full"
+                        />
+                        <span className="absolute bottom-0.5 right-0.5 px-1.5 py-0.2 rounded-md bg-indigo-600/90 text-white text-[9px] font-black">
+                          Lv.{item.level || 1}
+                        </span>
+                      </div>
 
                       <div>
                         <h4 className="font-extrabold text-gray-800 text-sm flex items-center gap-2">
@@ -1046,7 +896,7 @@ export default function StudentDashboard() {
                           {isMe && <span className="text-[10px] bg-indigo-600 text-white px-2 py-0.5 rounded-full">คุณ</span>}
                         </h4>
                         <p className="text-xs text-purple-600 font-bold">
-                          {item.equipped_title || '🌱 นักคำนวณฝึกหัด'} • <span className="text-gray-400">{item.group_name || 'ทั่วไป'}</span>
+                          {friendTitle} • <span className="text-gray-400">{item.group_name || 'ทั่วไป'}</span>
                         </p>
                       </div>
                     </div>

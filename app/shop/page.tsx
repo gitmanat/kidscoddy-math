@@ -1,254 +1,174 @@
 'use client'
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
-import { CoinIcon } from '@/components/CoinIcon'
-
-type CategoryTab = 'all' | 'outfit' | 'pants' | 'shoes' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title' | 'owned'
+import { CharacterStage } from '@/components/AvatarDisplay'
+import {
+  type AvatarConfig,
+  type Rarity,
+  type Slot,
+  RARITY_META,
+  SLOT_META,
+  rarityOf,
+  readAvatarConfig,
+  withOverride,
+} from '@/lib/avatar'
 
 export default function ShopPage() {
   const router = useRouter()
-  const [student, setStudent] = useState<any>(null)
-  const [items, setItems] = useState<any[]>([])
-  const [myInventory, setMyInventory] = useState<string[]>([])
+  const [user, setUser] = useState<any>(null)
   const [loading, setLoading] = useState(true)
+  const [buyingKey, setBuyingKey] = useState('')
+  const [toast, setToast] = useState('')
 
-  // 🔍 State สำหรับตัวกรองหมวดหมู่และค้นหา
-  const [selectedCategory, setSelectedCategory] = useState<CategoryTab>('all')
-  const [searchQuery, setSearchQuery] = useState('')
+  const [items, setItems] = useState<any[]>([])
+  const [ownedKeys, setOwnedKeys] = useState<Set<string>>(new Set())
+
+  const [selectedSlot, setSelectedSlot] = useState<'ALL' | Slot>('ALL')
+  const [selectedRarity, setSelectedRarity] = useState<'ALL' | Rarity>('ALL')
+  const [search, setSearch] = useState('')
+
+  const [baseConfig, setBaseConfig] = useState<AvatarConfig>({ v: 2, mode: 'doll', base: {}, equip: {} })
+  const [previewItem, setPreviewItem] = useState<any | null>(null)
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(''), 3200)
+  }
 
   useEffect(() => {
-    const storedUser = localStorage.getItem('kidscoddy_user')
-    if (!storedUser) {
+    const raw = localStorage.getItem('kidscoddy_user')
+    if (!raw) {
       router.push('/login')
       return
     }
-    const userData = JSON.parse(storedUser)
-    setStudent(userData)
-    fetchShopData(userData.id)
+    const localUser = JSON.parse(raw)
+    loadShop(localUser.id)
   }, [router])
 
-  const fetchShopData = async (userId: string) => {
+  const loadShop = async (userId: string) => {
+    setLoading(true)
     try {
-      const { data: userLatest } = await supabase
-        .from('users')
-        .select('*')
-        .eq('id', userId)
-        .single()
-      if (userLatest) setStudent(userLatest)
+      const [{ data: uData, error: uErr }, { data: shopData }, { data: invData }] = await Promise.all([
+        supabase.from('users').select('*').eq('id', userId).single(),
+        supabase
+          .from('shop_items')
+          .select('*')
+          .eq('is_active', true)
+          .order('sort_order', { ascending: true }),
+        supabase.from('user_inventory').select('item_key').eq('user_id', userId),
+      ])
 
-      const { data: shopData } = await supabase
-        .from('shop_items')
-        .select('*')
-        .order('price_coins', { ascending: true })
+      if (uErr || !uData) throw uErr || new Error('ไม่พบข้อมูลผู้ใช้')
+      setUser(uData)
+      localStorage.setItem('kidscoddy_user', JSON.stringify(uData))
+      setBaseConfig(readAvatarConfig(uData))
+
       setItems(shopData || [])
-
-      const { data: invData } = await supabase
-        .from('user_inventory')
-        .select('item_key')
-        .eq('user_id', userId)
-
-      setMyInventory(invData ? invData.map((i) => i.item_key) : [])
+      const owned = new Set<string>((invData || []).map((r: any) => r.item_key))
+      ;(shopData || []).forEach((it: any) => {
+        if (Number(it.price_coins) === 0) owned.add(it.item_key)
+      })
+      setOwnedKeys(owned)
     } catch (err) {
-      console.error('Error fetching shop:', err)
+      console.error('Shop load error:', err)
+      showToast('โหลดร้านค้าไม่สำเร็จ')
     } finally {
       setLoading(false)
     }
   }
 
-  // ซื้อไอเทม
-  const handleBuyItem = async (item: any) => {
-    if ((student.coins || 0) < item.price_coins) {
-      alert('❌ เหรียญทองไม่พอ! ไปลุยทำแบบฝึกหัดเพิ่มเพื่อเก็บเหรียญกันเถอะ!')
+  const stageConfig = useMemo(() => {
+    if (!previewItem) return baseConfig
+    return withOverride(baseConfig, previewItem.item_type as Slot, {
+      key: previewItem.item_key,
+      name: previewItem.item_name,
+      d: previewItem.design,
+    })
+  }, [baseConfig, previewItem])
+
+  const filteredItems = useMemo(() => {
+    const q = search.trim().toLowerCase()
+    return items.filter((it) => {
+      if (selectedSlot !== 'ALL' && it.item_type !== selectedSlot) return false
+      if (selectedRarity !== 'ALL' && rarityOf(it.rarity) !== selectedRarity) return false
+      if (q && !String(it.item_name || '').toLowerCase().includes(q)) return false
+      return true
+    })
+  }, [items, selectedSlot, selectedRarity, search])
+
+  const handleBuy = async (item: any) => {
+    if (!user || buyingKey) return
+    if (ownedKeys.has(item.item_key)) return
+    if ((user.coins || 0) < item.price_coins) {
+      showToast('🪙 คอยน์ยังไม่พอ ลองทำแบบฝึกหัดเพิ่มนะ!')
       return
     }
 
-    if (!confirm(`คุณต้องการซื้อ "${item.item_name}" ในราคา ${item.price_coins} Coins ใช่หรือไม่?`)) return
-
+    setBuyingKey(item.item_key)
     try {
-      const newCoins = student.coins - item.price_coins
-
-      const { error: updateErr } = await supabase
-        .from('users')
-        .update({ coins: newCoins })
-        .eq('id', student.id)
-
-      if (updateErr) throw updateErr
-
-      const { error: invErr } = await supabase.from('user_inventory').insert({
-        user_id: student.id,
-        item_key: item.item_key,
+      const { data, error } = await supabase.rpc('buy_shop_item', {
+        p_user_id: user.id,
+        p_item_key: item.item_key,
       })
-
-      if (invErr) throw invErr
-
-      alert(`🎉 เย้! ซื้อ "${item.item_name}" สำเร็จแล้ว! กดปุ่ม "สวมใส่" เพื่อใช้งานได้เลย`)
-
-      const updatedUser = { ...student, coins: newCoins }
-      setStudent(updatedUser)
-      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
-      setMyInventory([...myInventory, item.item_key])
-    } catch (err: any) {
-      alert('เกิดข้อผิดพลาด: ' + err.message)
-    }
-  }
-
-  // สวมใส่ไอเทม (รองรับทุกชิ้นส่วนแบบ Roblox)
-  const handleEquipItem = async (item: any) => {
-    try {
-      let updateData: any = {}
-      if (item.item_type === 'avatar') updateData.avatar_url = item.image_url
-      else if (item.item_type === 'outfit') updateData.equipped_outfit = item.image_url
-      else if (item.item_type === 'pants') updateData.equipped_pants = item.image_url
-      else if (item.item_type === 'shoes') updateData.equipped_shoes = item.image_url
-      else if (item.item_type === 'hat') updateData.equipped_hat = item.image_url
-      else if (item.item_type === 'glasses') updateData.equipped_glasses = item.image_url
-      else if (item.item_type === 'bg') updateData.equipped_bg = item.image_url
-      else if (item.item_type === 'frame') updateData.avatar_frame = item.item_key
-      else if (item.item_type === 'title') updateData.equipped_title = item.item_name
-
-      const { error } = await supabase
-        .from('users')
-        .update(updateData)
-        .eq('id', student.id)
-
       if (error) throw error
-
-      alert(`✨ สวมใส่ "${item.item_name}" เรียบร้อยแล้ว!`)
-      const updatedUser = { ...student, ...updateData }
-      setStudent(updatedUser)
-      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
-    } catch (err: any) {
-      alert('สวมใส่ไม่สำเร็จ: ' + err.message)
-    }
-  }
-
-  // 🎯 กรองรายการสินค้าตามหมวดหมู่และคำค้นหา
-  const filteredItems = useMemo(() => {
-    return items.filter((item) => {
-      const matchesSearch = item.item_name.toLowerCase().includes(searchQuery.toLowerCase())
-      if (!matchesSearch) return false
-
-      if (selectedCategory === 'all') return true
-      if (selectedCategory === 'owned') return myInventory.includes(item.item_key)
-      return item.item_type === selectedCategory
-    })
-  }, [items, selectedCategory, searchQuery, myInventory])
-
-  // นับจำนวนสินค้าในแต่ละหมวดหมู่ (อัปเดตครบทุกชิ้นส่วน)
-  const counts = useMemo(() => {
-    return {
-      all: items.length,
-      outfit: items.filter((i) => i.item_type === 'outfit').length,
-      pants: items.filter((i) => i.item_type === 'pants').length,
-      shoes: items.filter((i) => i.item_type === 'shoes').length,
-      hat: items.filter((i) => i.item_type === 'hat').length,
-      glasses: items.filter((i) => i.item_type === 'glasses').length,
-      bg: items.filter((i) => i.item_type === 'bg').length,
-      avatar: items.filter((i) => i.item_type === 'avatar').length,
-      frame: items.filter((i) => i.item_type === 'frame').length,
-      title: items.filter((i) => i.item_type === 'title').length,
-      owned: items.filter((i) => myInventory.includes(i.item_key)).length,
-    }
-  }, [items, myInventory])
-
-  // ฟังก์ชันช่วยแสดงตัวอย่างไอคอนสินค้าในร้าน (รองรับทุกประเภทแบบละเอียด)
-  const renderItemPreview = (item: any) => {
-    // 1. ถ้าเป็นอวตารตัวละคร (Avatar)
-    if (item.item_type === 'avatar' && item.image_url) {
-      return (
-        <div className="w-14 h-14 rounded-2xl bg-indigo-50 border border-indigo-100 overflow-hidden shrink-0 p-1">
-          <img src={item.image_url} alt={item.item_name} className="w-full h-full object-cover" />
-        </div>
-      )
-    }
-
-    // 2. ถ้าเป็นพื้นหลัง (Background - bg) -> แสดงเป็นกล่องสีไล่ระดับตาม CSS ที่กำหนดใน image_url
-    if (item.item_type === 'bg') {
-      return (
-        <div 
-          className="w-14 h-14 rounded-2xl border border-indigo-100 shrink-0 shadow-inner" 
-          style={{ background: item.image_url }} 
-        />
-      )
-    }
-
-    // 3. ถ้าเป็นหมวก (Hat) หรือ แว่นตา (Glasses) -> แสดง Emoji หรือไอคอนตัวใหญ่ๆ ตรงกลางกล่อง
-    if (item.item_type === 'hat' || item.item_type === 'glasses') {
-      return (
-        <div className="w-14 h-14 rounded-2xl bg-purple-50 border border-purple-100 flex items-center justify-center text-3xl shrink-0 shadow-xs">
-          {item.image_url}
-        </div>
-      )
-    }
-
-    // 4. ถ้าเป็นกรอบอวตาร (Frame)
-    if (item.item_type === 'frame') {
-      let frameClass = 'border-2 border-gray-300'
-      let icon = '🖼️'
-      if (item.item_key === 'frame_fire') {
-        frameClass = 'border-3 border-orange-500 shadow-md shadow-orange-200 ring-2 ring-orange-300'
-        icon = '🔥'
-      } else if (item.item_key === 'frame_gold') {
-        frameClass = 'border-3 border-yellow-400 shadow-md shadow-yellow-200 ring-2 ring-yellow-300'
-        icon = '👑'
-      } else if (item.item_key === 'frame_diamond') {
-        frameClass = 'border-3 border-cyan-400 shadow-md shadow-cyan-200 ring-2 ring-cyan-300'
-        icon = '💎'
+      if (!data?.ok) {
+        if (data?.error === 'not_enough_coins') showToast('🪙 คอยน์ไม่พอครับ')
+        else if (data?.error === 'already_owned') showToast('มีไอเทมนี้แล้วครับ')
+        else showToast('ซื้อไม่สำเร็จ: ' + data?.error)
+        return
       }
-      return (
-        <div className={`w-14 h-14 rounded-2xl bg-gradient-to-tr from-indigo-500 to-purple-500 flex items-center justify-center text-2xl shrink-0 ${frameClass}`}>
-          {icon}
-        </div>
-      )
+
+      const updatedUser = { ...user, coins: data.coins }
+      setUser(updatedUser)
+      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
+      setOwnedKeys((prev) => new Set([...prev, item.item_key]))
+      setPreviewItem(item)
+      showToast(`🎉 ซื้อ "${item.item_name}" สำเร็จ! กดไปห้องแต่งตัวเพื่อสวมใส่ได้เลย`)
+    } catch (err: any) {
+      console.error('Buy error:', err)
+      showToast('❌ เกิดข้อผิดพลาดในการซื้อ')
+    } finally {
+      setBuyingKey('')
     }
-
-    // 5. ค่าเริ่มต้นสำหรับไอเทมอื่นๆ (เช่น ฉายา)
-    return (
-      <div className="w-14 h-14 rounded-2xl bg-purple-100 flex items-center justify-center text-2xl shrink-0">
-        🏷️
-      </div>
-    )
   }
 
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดประตูเข้าร้านค้าเวทมนตร์...</div>
+  if (loading || !user) {
+    return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดร้านค้า...</div>
   }
-
-  const tabs: { key: CategoryTab; label: string; count: number }[] = [
-    { key: 'all', label: '✨ ทั้งหมด', count: items.length },
-    { key: 'outfit', label: '👕 เสื้อ', count: items.filter((i) => i.item_type === 'outfit').length },
-    { key: 'pants', label: '👖 กางเกง', count: items.filter((i) => i.item_type === 'pants').length },
-    { key: 'shoes', label: '👟 รองเท้า', count: items.filter((i) => i.item_type === 'shoes').length },
-    { key: 'hat', label: '👑 หมวก', count: items.filter((i) => i.item_type === 'hat').length },
-    { key: 'glasses', label: '🕶️ แว่นตา', count: items.filter((i) => i.item_type === 'glasses').length },
-    { key: 'bg', label: '🌌 พื้นหลัง', count: items.filter((i) => i.item_type === 'bg').length },
-    { key: 'frame', label: '🖼️ กรอบ', count: items.filter((i) => i.item_type === 'frame').length },
-    { key: 'title', label: '🏷️ ฉายา', count: items.filter((i) => i.item_type === 'title').length },
-    { key: 'owned', label: '🎒 ของฉัน', count: items.filter((i) => myInventory.includes(i.item_key)).length },
-  ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
-      <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-indigo-100 px-6 py-4 sticky top-0 z-10">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
-          <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-yellow-400 text-white flex items-center justify-center font-black text-lg shadow-md shadow-amber-200">
-              🛒
+    <div className="min-h-screen bg-gradient-to-br from-amber-50 via-orange-50 to-pink-50 pb-12">
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-gray-900/90 text-white px-5 py-3 rounded-2xl shadow-xl text-xs font-extrabold backdrop-blur">
+          {toast}
+        </div>
+      )}
+
+      {/* Header */}
+      <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-amber-100 px-6 py-4 sticky top-0 z-10">
+        <div className="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-amber-500 to-orange-500 text-white flex items-center justify-center text-xl shadow-md">
+              🛍️
             </div>
             <div>
-              <h1 className="font-extrabold text-gray-800 text-base">KidsCoddy Magic Shop</h1>
-              <p className="text-xs text-amber-600 font-bold">ร้านค้าแลกอวตาร กรอบ และฉายาเท่ๆ</p>
+              <h1 className="font-extrabold text-gray-800 text-base">ร้านค้าไอเทมแต่งตัว</h1>
+              <p className="text-xs text-amber-700 font-bold">กด "ลองใส่" เพื่อดูตัวอย่างบนตัวละครก่อนซื้อได้ฟรี!</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-1.5 bg-yellow-50 border border-yellow-200 px-3.5 py-1.5 rounded-2xl shadow-xs">
-              <CoinIcon className="w-5 h-5 shrink-0" />
-              <span className="text-sm font-black text-yellow-700">{student?.coins || 0} Coins</span>
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="px-4 py-2 rounded-2xl bg-amber-100 border border-amber-300 text-amber-950 text-xs font-black">
+              🪙 คอยน์ของฉัน: {(user.coins || 0).toLocaleString()}
             </div>
-
+            <button
+              onClick={() => router.push('/profile')}
+              className="px-4 py-2 bg-purple-100 hover:bg-purple-200 text-purple-800 text-xs font-extrabold rounded-xl transition cursor-pointer"
+            >
+              🎨 โปรไฟล์ & แต่งตัว
+            </button>
             <button
               onClick={() => router.push('/dashboard')}
               className="px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-extrabold rounded-xl transition cursor-pointer"
@@ -259,122 +179,185 @@ export default function ShopPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 mt-8 space-y-6">
-        <div className="bg-gradient-to-r from-purple-600 to-indigo-600 rounded-3xl p-6 text-white shadow-xl flex justify-between items-center">
-          <div>
-            <h2 className="text-xl font-black mb-1">🎁 เลือกซื้ออวตารและไอเทมโปรดของคุณ!</h2>
-            <p className="text-xs text-purple-100">ใช้เหรียญทองจากการทำแบบฝึกหัดมาแต่งตัวละครให้เท่ไม่ซ้ำใครกันเลย!</p>
+      <main className="max-w-6xl mx-auto px-6 mt-6 grid lg:grid-cols-12 gap-6 items-start">
+        {/* ฝั่งซ้าย: เวทีลองชุด */}
+        <div className="lg:col-span-4 bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-md border border-amber-100 flex flex-col items-center space-y-4 lg:sticky lg:top-24">
+          <div className="w-full flex items-center justify-between">
+            <span className="text-xs font-black text-gray-700">✨ ห้องลองชุด (Preview)</span>
+            {previewItem && (
+              <button
+                type="button"
+                onClick={() => setPreviewItem(null)}
+                className="text-[11px] font-extrabold text-rose-600 hover:underline cursor-pointer"
+              >
+                รีเซ็ตชุดเดิม
+              </button>
+            )}
           </div>
-          <span className="text-3xl animate-bounce">🛍️</span>
+
+          <CharacterStage config={stageConfig} className="w-56 sm:w-64" animate={true} />
+
+          {previewItem ? (
+            <div className="w-full p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-center space-y-2">
+              <div className="text-xs font-black text-gray-800">กำลังลอง: {previewItem.item_name}</div>
+              {ownedKeys.has(previewItem.item_key) ? (
+                <button
+                  type="button"
+                  onClick={() => router.push('/profile')}
+                  className="w-full py-2 bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-black rounded-xl cursor-pointer"
+                >
+                  ✓ มีชิ้นนี้แล้ว (ไปสวมใส่ในห้องแต่งตัว)
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={buyingKey === previewItem.item_key || (user.coins || 0) < previewItem.price_coins}
+                  onClick={() => handleBuy(previewItem)}
+                  className="w-full py-2 bg-gradient-to-r from-amber-500 to-orange-500 disabled:opacity-40 text-white text-xs font-black rounded-xl shadow-sm cursor-pointer"
+                >
+                  {buyingKey === previewItem.item_key
+                    ? '⏳ กำลังซื้อ...'
+                    : `🛒 ซื้อเลย (${previewItem.price_coins} 🪙)`}
+                </button>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-gray-400 text-center">คลิกที่การ์ดสินค้าทางขวาเพื่อลองสวมใส่</p>
+          )}
         </div>
 
-        {/* 🎛️ แถบกรองหมวดหมู่สินค้า & ช่องค้นหา */}
-        <div className="bg-white/95 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-indigo-100 space-y-3">
-          <div className="flex flex-wrap gap-2">
-            {tabs.map((tab) => {
-              const isActive = selectedCategory === tab.key
-              return (
+        {/* ฝั่งขวา: รายการสินค้า */}
+        <div className="lg:col-span-8 space-y-4">
+          <div className="bg-white/95 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-amber-100 space-y-3">
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                type="button"
+                onClick={() => setSelectedSlot('ALL')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-black cursor-pointer ${
+                  selectedSlot === 'ALL' ? 'bg-amber-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                ทั้งหมด ({items.length})
+              </button>
+              {SLOT_META.map((s) => (
                 <button
-                  key={tab.key}
-                  onClick={() => setSelectedCategory(tab.key)}
-                  className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                    isActive
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                  key={s.key}
+                  type="button"
+                  onClick={() => setSelectedSlot(s.key)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-extrabold cursor-pointer ${
+                    selectedSlot === s.key ? 'bg-amber-500 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
                   }`}
                 >
-                  <span>{tab.label}</span>
-                  <span
-                    className={`px-1.5 py-0.5 rounded-full text-[10px] ${
-                      isActive ? 'bg-white/25 text-white' : 'bg-white text-gray-500'
+                  {s.icon} {s.label}
+                </button>
+              ))}
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <input
+                type="text"
+                placeholder="🔍 ค้นหาชื่อไอเทม..."
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="flex-1 min-w-[12rem] px-3.5 py-2 rounded-xl border border-gray-200 text-xs font-semibold outline-none focus:ring-2 focus:ring-amber-400"
+              />
+              <select
+                value={selectedRarity}
+                onChange={(e) => setSelectedRarity(e.target.value as any)}
+                className="px-3 py-2 rounded-xl border border-gray-200 text-xs font-extrabold text-gray-700 cursor-pointer"
+              >
+                <option value="ALL">ความหายาก: ทุกระดับ</option>
+                <option value="common">★ ธรรมดา</option>
+                <option value="rare">★★ หายาก</option>
+                <option value="epic">★★★ อีพิค</option>
+                <option value="legendary">★★★★ ในตำนาน</option>
+              </select>
+            </div>
+          </div>
+
+          {filteredItems.length === 0 ? (
+            <div className="bg-white/95 p-10 rounded-3xl text-center text-sm text-gray-400 font-bold">
+              ไม่พบไอเทมในหมวดนี้
+            </div>
+          ) : (
+            <div className="grid grid-cols-2 sm:grid-cols-3 gap-3.5">
+              {filteredItems.map((item) => {
+                const owned = ownedKeys.has(item.item_key)
+                const isPreviewing = previewItem?.item_key === item.item_key
+                const r = RARITY_META[rarityOf(item.rarity)]
+                const slotMeta = SLOT_META.find((s) => s.key === item.item_type)
+                const canAfford = (user.coins || 0) >= item.price_coins
+
+                return (
+                  <div
+                    key={item.item_key}
+                    onClick={() => setPreviewItem(item)}
+                    className={`p-4 rounded-3xl border-2 transition cursor-pointer flex flex-col justify-between gap-3 bg-gradient-to-b ${r.bg} ${
+                      isPreviewing
+                        ? 'border-amber-500 ring-2 ring-amber-200 scale-[1.02]'
+                        : `${r.border} hover:shadow-md`
                     }`}
                   >
-                    {tab.count}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between gap-1">
+                        <span className={`text-[10px] font-black ${r.text}`}>
+                          {'★'.repeat(r.stars)} {r.label}
+                        </span>
+                        <span className="text-[11px] font-bold text-gray-400">
+                          {slotMeta?.icon} {slotMeta?.label}
+                        </span>
+                      </div>
 
-          <input
-            type="text"
-            placeholder="🔍 ค้นหาชื่ออวตาร, กรอบ, หรือฉายา..."
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-4 py-2.5 rounded-2xl border border-gray-200 text-xs font-semibold outline-none focus:ring-2 focus:ring-indigo-500"
-          />
-        </div>
+                      <h3 className="font-extrabold text-xs sm:text-sm text-gray-800 line-clamp-2 leading-snug">
+                        {item.item_name}
+                      </h3>
 
-        {/* รายการสินค้าในร้าน */}
-        {filteredItems.length === 0 ? (
-          <div className="bg-white/90 rounded-3xl p-12 text-center border border-indigo-100 space-y-2">
-            <span className="text-3xl">🛍️</span>
-            <p className="text-sm font-bold text-gray-600">
-              {selectedCategory === 'owned'
-                ? 'คุณยังไม่มีไอเทมในกระเป๋าเลย ลองเลือกซื้อไอเทมชิ้นแรกดูสิ!'
-                : 'ไม่พบไอเทมที่ค้นหา'}
-            </p>
-          </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {filteredItems.map((item) => {
-              const isOwned = myInventory.includes(item.item_key)
-
-              let isEquipped = false
-              if (item.item_type === 'avatar') {
-                isEquipped = Boolean(student?.avatar_url && student.avatar_url === item.image_url)
-              } else if (item.item_type === 'frame') {
-                isEquipped = Boolean(student?.avatar_frame && student.avatar_frame === item.item_key)
-              } else if (item.item_type === 'title') {
-                isEquipped = Boolean(student?.equipped_title && student.equipped_title === item.item_name)
-              }
-
-              return (
-                <div
-                  key={item.id}
-                  className="bg-white/95 backdrop-blur-sm p-5 rounded-3xl shadow-sm border border-indigo-100 flex justify-between items-center gap-4 hover:shadow-md transition"
-                >
-                  <div className="flex items-center gap-3">
-                    {renderItemPreview(item)}
-
-                    <div className="space-y-1">
-                      <span className="px-2.5 py-0.5 bg-indigo-50 text-indigo-700 text-[10px] font-extrabold rounded-full">
-                        {item.item_type === 'avatar' ? '🤖 อวตารตัวละคร' : item.item_type === 'frame' ? '🖼️ กรอบอวตาร' : '🏷️ ฉายาพิเศษ'}
-                      </span>
-                      <h3 className="text-sm font-black text-gray-800">{item.item_name}</h3>
-                      <div className="flex items-center gap-1 text-xs font-bold text-yellow-600">
-                        <CoinIcon className="w-4 h-4" />
-                        <span>{item.price_coins} Coins</span>
+                      <div className="flex items-center gap-1.5 pt-1">
+                        {(item.design?.colors || []).slice(0, 3).map((c: string, i: number) => (
+                          <span
+                            key={i}
+                            className="w-4 h-4 rounded-full border border-black/15"
+                            style={{ backgroundColor: c }}
+                          />
+                        ))}
+                        {item.design?.css && (
+                          <span
+                            className="w-12 h-4 rounded-full border border-black/15"
+                            style={{ background: item.design.css }}
+                          />
+                        )}
                       </div>
                     </div>
-                  </div>
 
-                  <div>
-                    {isEquipped ? (
-                      <span className="px-4 py-2 bg-emerald-100 text-emerald-800 text-xs font-extrabold rounded-2xl">
-                        ✓ สวมใส่อยู่
-                      </span>
-                    ) : isOwned ? (
-                      <button
-                        onClick={() => handleEquipItem(item)}
-                        className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-extrabold rounded-2xl shadow transition cursor-pointer"
-                      >
-                        ✨ สวมใส่
-                      </button>
-                    ) : (
-                      <button
-                        onClick={() => handleBuyItem(item)}
-                        className="px-4 py-2 bg-gradient-to-r from-amber-500 to-yellow-500 hover:from-amber-600 hover:to-yellow-600 text-white text-xs font-extrabold rounded-2xl shadow transition cursor-pointer"
-                      >
-                        🛒 ซื้อเลย
-                      </button>
-                    )}
+                    <div className="pt-2 border-t border-black/5 flex items-center justify-between gap-1.5">
+                      {owned ? (
+                        <span className="w-full py-1.5 text-center rounded-xl bg-emerald-100 text-emerald-800 text-xs font-black">
+                          ✓ มีแล้ว
+                        </span>
+                      ) : (
+                        <button
+                          type="button"
+                          disabled={!canAfford || buyingKey === item.item_key}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            handleBuy(item)
+                          }}
+                          className={`w-full py-1.5 rounded-xl text-xs font-black transition cursor-pointer ${
+                            canAfford
+                              ? 'bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white shadow-xs'
+                              : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                          }`}
+                        >
+                          {buyingKey === item.item_key ? '⏳...' : `🪙 ${item.price_coins}`}
+                        </button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
+                )
+              })}
+            </div>
+          )}
+        </div>
       </main>
     </div>
   )

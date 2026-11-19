@@ -1,19 +1,59 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
-import { AvatarDisplay } from '@/components/AvatarDisplay'
+import { CharacterStage } from '@/components/AvatarDisplay'
+//import { POSE_PRESETS, type PosePresetKey } from '@/components/Character'
+import {
+  type AvatarConfig,
+  type EyeStyle,
+  type HairStyle,
+  type MouthStyle,
+  type Slot,
+  EYE_STYLES,
+  HAIR_COLORS,
+  HAIR_STYLES,
+  MOUTH_STYLES,
+  RARITY_META,
+  SKIN_TONES,
+  SLOT_META,
+  rarityOf,
+  readAvatarConfig,
+  resolveBase,
+  titleOf,
+} from '@/lib/avatar'
+import {
+  DEFAULT_FREE_POSE,
+  PART_META,
+  POSE_PRESETS,
+  resolveFreePose,
+  type FreePoseConfig,
+  type PartTransform,
+  type PosePresetKey,
+} from '@/components/Character'
 
-type SlotCategory = 'avatar' | 'outfit' | 'pants' | 'shoes' | 'hat' | 'glasses' | 'bg' | 'frame' | 'title'
+type Preset = { name: string; keys: Partial<Record<Slot, string>> }
 
 export default function ProfileStudioPage() {
   const router = useRouter()
   const [student, setStudent] = useState<any>(null)
-  const [inventoryItems, setInventoryItems] = useState<any[]>([])
-  const [activeTab, setActiveTab] = useState<SlotCategory>('outfit')
+  const [shopItems, setShopItems] = useState<any[]>([])
+  const [ownedKeys, setOwnedKeys] = useState<Set<string>>(new Set())
+
+  const [draft, setDraft] = useState<AvatarConfig>({ v: 2, mode: 'doll', base: {}, equip: {} })
+  const [presets, setPresets] = useState<Preset[]>([])
+  const [activeTab, setActiveTab] = useState<'face' | Slot>('face')
+
   const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [toast, setToast] = useState('')
+
+  const showToast = (msg: string) => {
+    setToast(msg)
+    setTimeout(() => setToast(''), 3000)
+  }
 
   useEffect(() => {
     const storedUser = localStorage.getItem('kidscoddy_user')
@@ -28,91 +68,175 @@ export default function ProfileStudioPage() {
 
   const fetchProfileData = async (userId: string) => {
     try {
-      const { data: userLatest } = await supabase.from('users').select('*').eq('id', userId).single()
+      const [{ data: userLatest }, { data: allItems }, { data: invData }] = await Promise.all([
+        supabase.from('users').select('*').eq('id', userId).single(),
+        supabase.from('shop_items').select('*').order('sort_order', { ascending: true }),
+        supabase.from('user_inventory').select('item_key').eq('user_id', userId),
+      ])
+
       if (userLatest) {
         setStudent(userLatest)
         localStorage.setItem('kidscoddy_user', JSON.stringify(userLatest))
+        const cfg = readAvatarConfig(userLatest)
+        setDraft(cfg)
+        setPresets(Array.isArray((cfg as any).presets) ? (cfg as any).presets : [])
       }
 
-      const { data: invData } = await supabase.from('user_inventory').select('item_key').eq('user_id', userId)
-      if (invData && invData.length > 0) {
-        const keys = invData.map((i) => i.item_key)
-        const { data: shopData } = await supabase.from('shop_items').select('*').in('item_key', keys)
-        setInventoryItems(shopData || [])
-      }
+      setShopItems(allItems || [])
+      const owned = new Set<string>((invData || []).map((i: any) => i.item_key))
+      ;(allItems || []).forEach((it: any) => {
+        if (Number(it.price_coins) === 0) owned.add(it.item_key)
+      })
+      setOwnedKeys(owned)
     } catch (err) {
       console.error(err)
+      showToast('โหลดข้อมูลไม่สำเร็จ')
     } finally {
       setLoading(false)
     }
   }
 
-  // ฟังก์ชันสำหรับปรับตำแหน่ง/ขนาดไอเทม (Fine-Tuning)
-  const handleAdjustTransform = async (fieldPrefix: 'hat' | 'glasses', type: 'x' | 'y' | 'scale', delta: number) => {
-    try {
-      const currentVal = student[`${fieldPrefix}_${type}`] ?? (type === 'scale' ? 1 : 0)
-      let newVal = type === 'scale' ? Number((Number(currentVal) + delta).toFixed(2)) : Number(currentVal) + delta
+  const base = useMemo(() => resolveBase(draft), [draft])
+  const fpDraft = useMemo(() => resolveFreePose(draft), [draft])
 
-      // จำกัดขอบเขตการย่อ-ขยายไม่ให้เล็กหรือใหญ่เกินไป
-      if (type === 'scale') {
-        newVal = Math.max(0.4, Math.min(2.5, newVal))
+  // เด็กขยับเอง (ลากบนเวที หรือเลื่อนแถบ) → เก็บทั้ง pose และ freePose คู่กันเสมอ
+  const setFree = (fp: FreePoseConfig, pose = 'custom') =>
+    setDraft((prev) => ({ ...prev, mode: 'doll', pose, freePose: fp } as any))
+  const setPart = (key: keyof FreePoseConfig, patch: Partial<PartTransform>) =>
+    setFree({ ...fpDraft, [key]: { ...fpDraft[key], ...patch } })
+
+  const ownedItemsBySlot = useMemo(() => {
+    const map: Record<string, any[]> = {}
+    SLOT_META.forEach((s) => (map[s.key] = []))
+    shopItems.forEach((it) => {
+      if (ownedKeys.has(it.item_key) && map[it.item_type]) {
+        map[it.item_type].push(it)
       }
+    })
+    return map
+  }, [shopItems, ownedKeys])
 
-      const updateData = { [`${fieldPrefix}_${type}`]: newVal }
+  const ownedPortraits = useMemo(() => {
+    const list: string[] = []
+    if (draft.portrait) list.push(draft.portrait)
+    shopItems.forEach((it) => {
+      if (it.item_type === 'avatar' && ownedKeys.has(it.item_key) && it.image_url && !list.includes(it.image_url)) {
+        list.push(it.image_url)
+      }
+    })
+    return list
+  }, [shopItems, ownedKeys, draft.portrait])
 
-      const { error } = await supabase.from('users').update(updateData).eq('id', student.id)
-      if (error) throw error
-
-      const updatedUser = { ...student, ...updateData }
-      setStudent(updatedUser)
-      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
-    } catch (err: any) {
-      console.error(err)
-    }
+  const updateBase = (patch: Partial<typeof base>) => {
+    setDraft((prev) => ({
+      ...prev,
+      mode: 'doll',
+      base: { ...(prev.base || {}), ...patch },
+    }))
   }
 
-  // ฟังก์ชันรีเซ็ตตำแหน่งและขนาดกลับเป็นค่าเริ่มต้น
-  const handleResetTransform = async (fieldPrefix: 'hat' | 'glasses') => {
-    try {
-      const updateData = {
-        [`${fieldPrefix}_x`]: 0,
-        [`${fieldPrefix}_y`]: 0,
-        [`${fieldPrefix}_scale`]: 1.0,
-      }
-
-      const { error } = await supabase.from('users').update(updateData).eq('id', student.id)
-      if (error) throw error
-
-      const updatedUser = { ...student, ...updateData }
-      setStudent(updatedUser)
-      localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
-    } catch (err: any) {
-      console.error(err)
-    }
+  const equipItem = (slot: Slot, item: any | null) => {
+    setDraft((prev) => ({
+      ...prev,
+      mode: 'doll',
+      equip: {
+        ...(prev.equip || {}),
+        [slot]: item ? { key: item.item_key, name: item.item_name, d: item.design } : null,
+      },
+    }))
   }
 
-  // สวมใส่ หรือ ถอดไอเทมออกตามหมวดหมู่ชิ้นส่วน
-  const handleToggleEquip = async (slotType: SlotCategory, value: string | null) => {
+  const randomizeLook = () => {
+    const pick = <T,>(arr: T[]) => arr[Math.floor(Math.random() * arr.length)]
+    const nextEquip: any = { ...(draft.equip || {}) }
+    SLOT_META.forEach(({ key }) => {
+      const pool = ownedItemsBySlot[key] || []
+      if (pool.length > 0) {
+        const mustWear = key === 'outfit' || key === 'pants' || key === 'shoes'
+        if (mustWear || Math.random() < 0.6) {
+          const chosen = pick(pool)
+          nextEquip[key] = { key: chosen.item_key, name: chosen.item_name, d: chosen.design }
+        } else {
+          nextEquip[key] = null
+        }
+      }
+    })
+
+    setDraft((prev) => ({
+      ...prev,
+      mode: 'doll',
+      base: {
+        skin: pick(SKIN_TONES),
+        hair: pick(HAIR_STYLES).key,
+        hairColor: pick(HAIR_COLORS),
+        eyes: pick(EYE_STYLES).key,
+        mouth: pick(MOUTH_STYLES).key,
+      },
+      equip: nextEquip,
+    }))
+    showToast('🎲 สุ่มลุคใหม่แล้ว! กด "บันทึกตัวละคร" เพื่อใช้งาน')
+  }
+
+  const saveCurrentAsPreset = (idx: number) => {
+    const keys: Partial<Record<Slot, string>> = {}
+    SLOT_META.forEach(({ key }) => {
+      const k = draft.equip?.[key]?.key
+      if (k) keys[key] = k
+    })
+    const next = [...presets]
+    next[idx] = { name: `ชุดโปรด ${idx + 1}`, keys }
+    setPresets(next)
+    showToast(`⭐ บันทึกลง "ชุดโปรด ${idx + 1}" แล้ว`)
+  }
+
+  const applyPreset = (p: Preset) => {
+    const nextEquip: any = {}
+    SLOT_META.forEach(({ key }) => {
+      const k = p.keys?.[key]
+      if (k) {
+        const found = shopItems.find((it) => it.item_key === k)
+        if (found && ownedKeys.has(k)) {
+          nextEquip[key] = { key: found.item_key, name: found.item_name, d: found.design }
+        }
+      }
+    })
+    setDraft((prev) => ({ ...prev, mode: 'doll', equip: nextEquip }))
+    showToast(`✨ สวมใส่ "${p.name}" แล้ว`)
+  }
+
+  const handleSave = async () => {
+    if (!student || saving) return
+    setSaving(true)
     try {
-      let updateData: any = {}
-      if (slotType === 'avatar') updateData.avatar_url = value
-      else if (slotType === 'outfit') updateData.equipped_outfit = value
-      else if (slotType === 'pants') updateData.equipped_pants = value
-      else if (slotType === 'shoes') updateData.equipped_shoes = value
-      else if (slotType === 'hat') updateData.equipped_hat = value
-      else if (slotType === 'glasses') updateData.equipped_glasses = value
-      else if (slotType === 'bg') updateData.equipped_bg = value
-      else if (slotType === 'frame') updateData.avatar_frame = value
-      else if (slotType === 'title') updateData.equipped_title = value
-
-      const { error } = await supabase.from('users').update(updateData).eq('id', student.id)
+      const payload = { ...draft, presets }
+      const { data, error } = await supabase.rpc('save_avatar', {
+        p_user_id: student.id,
+        p_config: payload,
+      })
       if (error) throw error
+      if (!data?.ok) throw new Error(data?.error || 'บันทึกไม่สำเร็จ')
 
-      const updatedUser = { ...student, ...updateData }
+      // กันท่าทางหาย: ถ้า RPC ฝั่งฐานข้อมูลตัดฟิลด์ pose/freePose ทิ้ง ให้ใช้ค่าที่เพิ่งบันทึกไว้ในเครื่องแทน
+      const savedCfg: any = { ...data.config }
+      if (!savedCfg.freePose && (payload as any).freePose) {
+        savedCfg.freePose = (payload as any).freePose
+        savedCfg.pose = (payload as any).pose
+        console.warn('save_avatar ไม่ได้เก็บ pose/freePose — ต้องแก้ SQL ของฟังก์ชัน (ดูคำแนะนำ)')
+      }
+      const updatedUser = {
+        ...student,
+        avatar_config: savedCfg,
+        equipped_title: data.config?.equip?.title?.name || student.equipped_title,
+      }
       setStudent(updatedUser)
+      setDraft(savedCfg)
       localStorage.setItem('kidscoddy_user', JSON.stringify(updatedUser))
+      showToast('✅ บันทึกตัวละครเรียบร้อย!')
     } catch (err: any) {
-      alert('เกิดข้อผิดพลาด: ' + err.message)
+      console.error(err)
+      showToast('❌ บันทึกไม่สำเร็จ: ' + (err?.message || 'ลองใหม่อีกครั้ง'))
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -120,51 +244,30 @@ export default function ProfileStudioPage() {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดตู้เสื้อผ้าเวทมนตร์...</div>
   }
 
-  // 8 หมวดหมู่ชิ้นส่วนหลัก + ฉายา
-  const slotTabs: { key: SlotCategory; label: string; icon: string }[] = [
-    { key: 'outfit', label: 'เสื้อผ้าหลัก', icon: '👕' },
-    { key: 'pants', label: 'กางเกง', icon: '👖' },
-    { key: 'shoes', label: 'รองเท้า', icon: '👟' },
-    { key: 'hat', label: 'หมวก/หัว', icon: '👑' },
-    { key: 'glasses', label: 'แว่นตา', icon: '🕶️' },
-    { key: 'bg', label: 'พื้นหลัง', icon: '🌌' },
-    { key: 'frame', label: 'กรอบออร่า', icon: '🖼️' },
-    { key: 'title', label: 'ฉายา', icon: '🏷️' },
-    { key: 'avatar', label: 'ฐานอวตาร', icon: '🤖' },
-  ]
-
-  const currentTabItems = inventoryItems.filter((item) => item.item_type === activeTab)
-
-  // ตรวจสอบว่าไอเทมชิ้นนี้สวมใส่อยู่หรือไม่
-  const checkIsEquipped = (item: any) => {
-    if (item.item_type === 'avatar') return student?.avatar_url === item.image_url
-    if (item.item_type === 'outfit') return student?.equipped_outfit === item.image_url
-    if (item.item_type === 'pants') return student?.equipped_pants === item.image_url
-    if (item.item_type === 'shoes') return student?.equipped_shoes === item.image_url
-    if (item.item_type === 'hat') return student?.equipped_hat === item.image_url
-    if (item.item_type === 'glasses') return student?.equipped_glasses === item.image_url
-    if (item.item_type === 'bg') return student?.equipped_bg === item.image_url
-    if (item.item_type === 'frame') return student?.avatar_frame === item.item_key
-    if (item.item_type === 'title') return student?.equipped_title === item.item_name
-    return false
-  }
+  const activeTitle = titleOf(draft) || student?.equipped_title || '🌱 นักคำนวณฝึกหัด'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-indigo-50 via-purple-50 to-pink-50 pb-12">
+      {toast && (
+        <div className="fixed bottom-5 right-5 z-50 bg-gray-900/90 text-white px-5 py-3 rounded-2xl shadow-xl text-xs font-extrabold backdrop-blur">
+          {toast}
+        </div>
+      )}
+
       {/* Header */}
       <header className="bg-white/85 backdrop-blur-md shadow-sm border-b border-indigo-100 px-6 py-4 sticky top-0 z-20">
-        <div className="max-w-4xl mx-auto flex justify-between items-center">
+        <div className="max-w-6xl mx-auto flex flex-wrap justify-between items-center gap-3">
           <div className="flex items-center space-x-3">
             <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-purple-600 to-pink-600 text-white flex items-center justify-center font-black text-lg shadow-md">
               🎨
             </div>
             <div>
-              <h1 className="font-extrabold text-gray-800 text-base">Roblox-Style Avatar Studio</h1>
-              <p className="text-xs text-purple-600 font-bold">ห้องแต่งตัวละครแบบละเอียดทุกชิ้นส่วน</p>
+              <h1 className="font-extrabold text-gray-800 text-base">โปรไฟล์ & ห้องแต่งตัวละคร</h1>
+              <p className="text-xs text-purple-600 font-bold">ปรับแต่งหน้าตาฟรี และสวมใส่ไอเทมจากกระเป๋า</p>
             </div>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2.5">
             <button
               onClick={() => router.push('/shop')}
               className="px-4 py-2 bg-amber-100 hover:bg-amber-200 text-amber-800 text-xs font-extrabold rounded-xl transition cursor-pointer flex items-center gap-1"
@@ -181,211 +284,400 @@ export default function ProfileStudioPage() {
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-6 mt-8 space-y-6">
-        {/* เวทีโชว์ตัวละคร Live Preview (Roblox Style) */}
-        <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-8 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-6 relative overflow-visible">
-          <div className="flex flex-col md:flex-row items-center gap-6 z-10">
-            <div className="pt-4">
-              <AvatarDisplay user={student} size="xl" />
-            </div>
-
-            <div className="text-center md:text-left space-y-2">
-              <span className="px-3 py-1 bg-white/20 backdrop-blur-md rounded-full text-xs font-extrabold">
-                {student?.equipped_title || '🌱 นักคำนวณฝึกหัด'}
-              </span>
-              <h2 className="text-2xl md:text-3xl font-black">{student?.display_name}</h2>
-              <p className="text-xs text-purple-100">
-                ระดับชั้น: {student?.group_name || 'ทั่วไป'} • สะสม XP: {student?.xp || 0}
-              </p>
-
-              <div className="flex items-center justify-center md:justify-start gap-2 pt-1">
-                <div className="bg-white/15 px-3 py-1.5 rounded-xl flex items-center gap-1.5 text-xs font-bold">
-                  <CoinIcon className="w-4 h-4" />
-                  <span>{student?.coins || 0} Coins</span>
-                </div>
-                <div className="bg-white/15 px-3 py-1.5 rounded-xl flex items-center gap-1.5 text-xs font-bold">
-                  <span>🔥</span>
-                  <span>Streak {student?.streak_days || 0} วัน</span>
-                </div>
-              </div>
-            </div>
+      <main className="max-w-6xl mx-auto px-6 mt-6 space-y-6">
+        {/* การ์ดข้อมูลโปรไฟล์นักเรียน */}
+        <div className="bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="text-center md:text-left space-y-1">
+            <span className="px-3 py-0.5 bg-white/20 backdrop-blur-md rounded-full text-xs font-extrabold">
+              {activeTitle}
+            </span>
+            <h2 className="text-2xl font-black">{student?.display_name}</h2>
+            <p className="text-xs text-purple-100">
+              ระดับชั้น: {student?.group_name || 'ทั่วไป'} • Level {student?.level || 1} ({student?.xp || 0} XP)
+            </p>
           </div>
 
-          {/* สรุปชิ้นส่วนที่สวมใส่อยู่ปัจจุบัน */}
-          <div className="bg-white/10 backdrop-blur-md border border-white/20 p-4 rounded-2xl w-full md:w-64 space-y-1.5 text-xs">
-            <p className="font-black text-amber-200 uppercase tracking-wider text-[10px] mb-1">สวมใส่ปัจจุบัน</p>
-            <div className="flex justify-between"><span className="text-purple-100">👕 เสื้อ:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_outfit ? 'ใส่แล้ว' : 'ไม่ได้ใส่'}</span></div>
-            <div className="flex justify-between"><span className="text-purple-100">👖 กางเกง:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_pants ? 'ใส่แล้ว' : 'ไม่ได้ใส่'}</span></div>
-            <div className="flex justify-between"><span className="text-purple-100">👑 หมวก:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_hat || 'ไม่ได้ใส่'}</span></div>
-            <div className="flex justify-between"><span className="text-purple-100">🕶️ แว่นตา:</span><span className="font-bold truncate max-w-[120px]">{student?.equipped_glasses || 'ไม่ได้ใส่'}</span></div>
-            <div className="flex justify-between"><span className="text-purple-100">🖼️ กรอบ:</span><span className="font-bold truncate max-w-[120px]">{student?.avatar_frame || 'ค่าเริ่มต้น'}</span></div>
+          <div className="flex items-center gap-3">
+            <div className="bg-white/15 backdrop-blur-md border border-white/20 px-4 py-2.5 rounded-2xl flex items-center gap-2 text-xs font-black">
+              <CoinIcon className="w-5 h-5" />
+              <span>{(student?.coins || 0).toLocaleString()} Coins</span>
+            </div>
+            <div className="bg-white/15 backdrop-blur-md border border-white/20 px-4 py-2.5 rounded-2xl flex items-center gap-1.5 text-xs font-black">
+              <span>🔥</span>
+              <span>Streak {student?.streak_days || 0} วัน</span>
+            </div>
           </div>
         </div>
 
-        {/* ตู้เสื้อผ้าเลือกเปลี่ยนชิ้นส่วน (8+ หมวดหมู่) */}
-        <div className="bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-md border border-indigo-100 space-y-6">
-          {/* แถบเลือกหมวดหมู่ */}
-          <div className="flex flex-wrap gap-2 border-b border-gray-100 pb-4">
-            {slotTabs.map((tab) => {
-              const isSelected = activeTab === tab.key
-              return (
-                <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`px-4 py-2 rounded-2xl text-xs font-extrabold transition flex items-center gap-1.5 cursor-pointer ${
-                    isSelected
-                      ? 'bg-indigo-600 text-white shadow-md shadow-indigo-200'
-                      : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
-                  }`}
-                >
-                  <span>{tab.icon}</span>
-                  <span>{tab.label}</span>
-                </button>
-              )
-            })}
-          </div>
+        {/* โซนห้องแต่งตัว */}
+        <div className="grid lg:grid-cols-12 gap-6 items-start">
+          {/* ฝั่งซ้าย: เวทีตัวละคร + ปุ่มบันทึก + ชุดโปรด */}
+          <div className="lg:col-span-4 bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-md border border-indigo-100 flex flex-col items-center space-y-4 lg:sticky lg:top-24">
+            <CharacterStage config={draft} className="w-56 sm:w-64" animate={true} onPoseChange={(fp) => setFree(fp)} />
+            <p className="text-[11px] font-bold text-purple-600 text-center">👆 ลากแขน ขา อาวุธ หรือตัวละครได้เลย!</p>
 
-          {/* 🎛️ แผงควบคุมปรับแต่งตำแหน่งและขนาด (แสดงเมื่อเลือกหมวดหมวกหรือแว่นตา และกำลังสวมใส่อยู่) */}
-          {(activeTab === 'hat' || activeTab === 'glasses') && student?.[`equipped_${activeTab}`] && (
-            <div className="bg-purple-50 border border-purple-200 p-4 rounded-2xl flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="space-y-0.5 text-center md:text-left">
-                <h4 className="text-xs font-black text-purple-900">
-                  🎛️ ปรับแต่งตำแหน่งและขนาด ({activeTab === 'hat' ? 'หมวก/ทรงผม' : 'แว่นตา'})
-                </h4>
-                <p className="text-[10px] text-purple-600">
-                  ขยับซ้าย-ขวา ขึ้น-ลง หรือย่อขยายให้พอดีตัวเป๊ะๆ ได้เลย!
-                </p>
-              </div>
-
-              <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-bold">
-                {/* ขยับซ้าย-ขวา */}
-                <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
-                  <span className="text-[11px]">↔️ ซ้าย-ขวา:</span>
-                  <button
-                    onClick={() => handleAdjustTransform(activeTab, 'x', -2)}
-                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
-                  >
-                    ◀
-                  </button>
-                  <button
-                    onClick={() => handleAdjustTransform(activeTab, 'x', 2)}
-                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
-                  >
-                    ▶
-                  </button>
-                </div>
-
-                {/* ขยับขึ้น-ลง */}
-                <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
-                  <span className="text-[11px]">↕️ ขึ้น-ลง:</span>
-                  <button
-                    onClick={() => handleAdjustTransform(activeTab, 'y', -2)}
-                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
-                  >
-                    ▲
-                  </button>
-                  <button
-                    onClick={() => handleAdjustTransform(activeTab, 'y', 2)}
-                    className="px-2 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer"
-                  >
-                    ▼
-                  </button>
-                </div>
-
-                {/* ย่อ-ขยาย */}
-                <div className="flex items-center gap-1 bg-white px-2.5 py-1.5 rounded-xl border border-purple-100 shadow-xs">
-                  <span className="text-[11px]">🔍 ขนาด:</span>
-                  <button
-                    onClick={() => handleAdjustTransform(activeTab, 'scale', -0.1)}
-                    className="px-2.5 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer font-black"
-                  >
-                    -
-                  </button>
-                  <button
-                    onClick={() => handleAdjustTransform(activeTab, 'scale', 0.1)}
-                    className="px-2.5 py-0.5 bg-gray-100 hover:bg-purple-100 text-purple-800 rounded cursor-pointer font-black"
-                  >
-                    +
-                  </button>
-                </div>
-
-                {/* ปุ่มรีเซ็ตค่าเริ่มต้น */}
-                <button
-                  onClick={() => handleResetTransform(activeTab)}
-                  className="px-3 py-1.5 bg-rose-100 hover:bg-rose-200 text-rose-700 rounded-xl text-[11px] font-extrabold transition cursor-pointer"
-                >
-                  🔄 รีเซ็ต
-                </button>
-              </div>
-            </div>
-          )}
-
-          {/* รายการไอเทมในหมวดหมู่ที่เลือก */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-            {/* การ์ดถอดออก */}
-            <div
-              onClick={() => handleToggleEquip(activeTab, null)}
-              className="p-4 rounded-2xl border-2 border-dashed border-gray-300 hover:border-rose-400 bg-gray-50 hover:bg-rose-50/40 flex flex-col items-center justify-center gap-2 cursor-pointer transition min-h-[140px]"
-            >
-              <span className="text-2xl">🚫</span>
-              <span className="text-xs font-extrabold text-gray-600 text-center">ถอดชิ้นส่วนนี้</span>
-              <span className="text-[10px] text-gray-400">(รีเซ็ตค่าเริ่มต้น)</span>
-            </div>
-
-            {currentTabItems.map((item) => {
-              const isEquipped = checkIsEquipped(item)
-              const valueToEquip =
-                item.item_type === 'frame'
-                  ? item.item_key
-                  : item.item_type === 'title'
-                  ? item.item_name
-                  : item.image_url
-
-              return (
-                <div
-                  key={item.id}
-                  onClick={() => handleToggleEquip(activeTab, isEquipped ? null : valueToEquip)}
-                  className={`p-4 rounded-2xl border-2 flex flex-col items-center justify-between gap-3 cursor-pointer transition min-h-[140px] ${
-                    isEquipped
-                      ? 'border-indigo-600 bg-indigo-50/70 ring-2 ring-indigo-200 shadow-sm'
-                      : 'border-gray-200 bg-white hover:border-indigo-300'
-                  }`}
-                >
-                  <div className="w-14 h-14 rounded-2xl bg-gray-100 flex items-center justify-center overflow-hidden text-3xl">
-                    {item.item_type === 'bg' ? (
-                      <div className="w-full h-full" style={{ background: item.image_url }} />
-                    ) : item.image_url?.startsWith('http') ? (
-                      <img src={item.image_url} alt={item.item_name} className="w-full h-full object-contain" />
-                    ) : (
-                      <span>{item.image_url || '🏷️'}</span>
-                    )}
-                  </div>
-
-                  <span className="text-xs font-bold text-gray-800 text-center line-clamp-1">{item.item_name}</span>
-
-                  <span
-                    className={`w-full py-1 rounded-xl text-[10px] font-black text-center ${
-                      isEquipped ? 'bg-emerald-500 text-white' : 'bg-indigo-100 text-indigo-700'
-                    }`}
-                  >
-                    {isEquipped ? '✓ สวมใส่อยู่ (คลิกถอด)' : 'คลิกเพื่อสวมใส่'}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-
-          {currentTabItems.length === 0 && (
-            <div className="text-center py-8 space-y-2">
-              <p className="text-xs text-gray-500 font-bold">คุณยังไม่มีไอเทมในหมวดหมู่นี้เลยครับ</p>
+            <div className="w-full grid grid-cols-2 gap-2">
               <button
-                onClick={() => router.push('/shop')}
-                className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white text-xs font-extrabold rounded-xl shadow cursor-pointer"
+                type="button"
+                onClick={randomizeLook}
+                className="py-2.5 px-3 bg-purple-50 hover:bg-purple-100 text-purple-700 text-xs font-extrabold rounded-2xl border border-purple-200 transition cursor-pointer"
               >
-                🛒 ไปเลือกซื้อที่ร้านค้าไอเทม
+                🎲 สุ่มลุคเท่ๆ
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving}
+                className="py-2.5 px-3 bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-600 hover:to-teal-700 disabled:opacity-50 text-white text-xs font-black rounded-2xl shadow-md shadow-emerald-200 transition cursor-pointer"
+              >
+                {saving ? '⏳ กำลังบันทึก...' : '💾 บันทึกตัวละคร'}
               </button>
             </div>
-          )}
+
+            <div className="w-full pt-3 border-t border-gray-100 space-y-2">
+              <p className="text-xs font-extrabold text-gray-600">⭐ ชุดโปรดของฉัน (สูงสุด 3 ชุด)</p>
+              <div className="grid grid-cols-3 gap-2">
+                {[0, 1, 2].map((idx) => {
+                  const p = presets[idx]
+                  return (
+                    <div key={idx} className="p-2 rounded-2xl border border-gray-100 bg-gray-50/70 text-center space-y-1.5">
+                      <div className="text-[11px] font-extrabold text-gray-700 truncate">
+                        {p ? p.name : `ช่องว่าง ${idx + 1}`}
+                      </div>
+                      <div className="flex gap-1 justify-center">
+                        {p && (
+                          <button
+                            type="button"
+                            onClick={() => applyPreset(p)}
+                            className="px-2 py-1 bg-indigo-600 text-white text-[10px] font-extrabold rounded-lg cursor-pointer"
+                          >
+                            ใส่
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => saveCurrentAsPreset(idx)}
+                          className="px-2 py-1 bg-white hover:bg-amber-50 text-amber-700 border border-amber-200 text-[10px] font-extrabold rounded-lg cursor-pointer"
+                        >
+                          บันทึก
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
+          </div>
+
+          {/* ฝั่งขวา: แท็บเลือกปรับแต่ง */}
+          <div className="lg:col-span-8 bg-white/95 backdrop-blur-sm p-6 rounded-3xl shadow-md border border-indigo-100 space-y-5">
+            <div className="flex flex-wrap gap-1.5 pb-3 border-b border-gray-100">
+              <button
+                type="button"
+                onClick={() => setActiveTab('face')}
+                className={`px-3.5 py-2 rounded-xl text-xs font-black transition cursor-pointer ${
+                  activeTab === 'face'
+                    ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm'
+                    : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                }`}
+              >
+                😊 หน้าตาและทรงผม (ฟรี)
+              </button>
+              {SLOT_META.map((s) => {
+                const count = ownedItemsBySlot[s.key]?.length || 0
+                return (
+                  <button
+                    key={s.key}
+                    type="button"
+                    onClick={() => setActiveTab(s.key)}
+                    className={`px-3 py-2 rounded-xl text-xs font-extrabold transition cursor-pointer flex items-center gap-1 ${
+                      activeTab === s.key
+                        ? 'bg-gradient-to-r from-indigo-600 to-purple-600 text-white shadow-sm'
+                        : 'bg-gray-100 hover:bg-gray-200 text-gray-600'
+                    }`}
+                  >
+                    <span>{s.icon}</span>
+                    <span>{s.label}</span>
+                    <span className={`px-1.5 rounded-full text-[10px] ${activeTab === s.key ? 'bg-white/25' : 'bg-white text-gray-500'}`}>
+                      {count}
+                    </span>
+                  </button>
+                )
+              })}
+            </div>
+
+            {activeTab === 'face' && (
+              
+              <div className="space-y-5">
+
+                <div>
+                  <h3 className="text-xs font-black text-gray-700 mb-2">🕺 ท่าทางสำเร็จรูป (Presets)</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {(Object.keys(POSE_PRESETS) as PosePresetKey[]).map((key) => {
+                      const currentPose = ((draft as any)?.pose as PosePresetKey) || 'idle'
+                      const isSelected = currentPose === key
+                      return (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setFree(POSE_PRESETS[key].freePose, key)}
+                          className={`px-3 py-2.5 rounded-2xl border text-xs font-extrabold transition cursor-pointer ${
+                            isSelected
+                              ? 'border-indigo-500 bg-indigo-50 text-indigo-800 ring-2 ring-indigo-200'
+                              : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                          }`}
+                        >
+                          {POSE_PRESETS[key].label}
+                        </button>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="flex items-center justify-between mb-2">
+                    <h3 className="text-xs font-black text-gray-700">🎛️ ขยับเองทีละชิ้น</h3>
+                    <button
+                      type="button"
+                      onClick={() => setFree(POSE_PRESETS.idle.freePose, 'idle')}
+                      className="px-3 py-1.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-[11px] font-extrabold text-gray-700 cursor-pointer"
+                    >
+                      ↩️ รีเซ็ตท่า
+                    </button>
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-2">
+                    {PART_META.map((m) => {
+                      const v = fpDraft[m.key]
+                      const sliders: { label: string; prop: keyof PartTransform; max: number }[] = [{ label: 'หมุน', prop: 'deg', max: m.deg }]
+                      if (m.move > 0) {
+                        sliders.push({ label: 'ซ้าย-ขวา', prop: 'x', max: m.move }, { label: 'ขึ้น-ลง', prop: 'y', max: m.key === 'body' ? 20 : m.move })
+                      }
+                      return (
+                        <div key={m.key} className="p-3 rounded-2xl border border-gray-100 bg-gray-50/70 space-y-1.5">
+                          <p className="text-xs font-black text-gray-700">{m.icon} {m.label}</p>
+                          {sliders.map((sl) => (
+                            <label key={sl.prop} className="flex items-center gap-2 text-[11px] font-bold text-gray-500">
+                              <span className="w-14 shrink-0">{sl.label}</span>
+                              <input
+                                type="range"
+                                min={-sl.max}
+                                max={sl.max}
+                                step={1}
+                                value={Math.round(v[sl.prop])}
+                                onChange={(e) => setPart(m.key, { [sl.prop]: Number(e.target.value) })}
+                                className="flex-1 accent-indigo-500"
+                              />
+                              <span className="w-8 text-right tabular-nums">{Math.round(v[sl.prop])}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-black text-gray-700 mb-2">🎨 สีผิว</h3>
+                  <div className="flex flex-wrap gap-2.5">
+                    {SKIN_TONES.map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        onClick={() => updateBase({ skin: hex })}
+                        className={`w-10 h-10 rounded-2xl border-2 transition cursor-pointer ${
+                          base.skin === hex ? 'border-indigo-600 scale-110 ring-2 ring-indigo-200' : 'border-white shadow-sm'
+                        }`}
+                        style={{ backgroundColor: hex }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-black text-gray-700 mb-2">💇 ทรงผม</h3>
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                    {HAIR_STYLES.map((h) => (
+                      <button
+                        key={h.key}
+                        type="button"
+                        onClick={() => updateBase({ hair: h.key as HairStyle })}
+                        className={`px-3 py-2.5 rounded-2xl border text-xs font-extrabold transition cursor-pointer ${
+                          base.hair === h.key
+                            ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                            : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                        }`}
+                      >
+                        {h.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <h3 className="text-xs font-black text-gray-700 mb-2">🌈 สีผม</h3>
+                  <div className="flex flex-wrap gap-2.5">
+                    {HAIR_COLORS.map((hex) => (
+                      <button
+                        key={hex}
+                        type="button"
+                        onClick={() => updateBase({ hairColor: hex })}
+                        className={`w-9 h-9 rounded-2xl border-2 transition cursor-pointer ${
+                          base.hairColor === hex ? 'border-indigo-600 scale-110 ring-2 ring-indigo-200' : 'border-white shadow-sm'
+                        }`}
+                        style={{ backgroundColor: hex }}
+                      />
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <h3 className="text-xs font-black text-gray-700 mb-2">👀 ดวงตา</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {EYE_STYLES.map((e) => (
+                        <button
+                          key={e.key}
+                          type="button"
+                          onClick={() => updateBase({ eyes: e.key as EyeStyle })}
+                          className={`px-3 py-2 rounded-xl border text-xs font-extrabold transition cursor-pointer ${
+                            base.eyes === e.key
+                              ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                              : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                          }`}
+                        >
+                          {e.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <h3 className="text-xs font-black text-gray-700 mb-2">👄 ปาก</h3>
+                    <div className="flex flex-wrap gap-2">
+                      {MOUTH_STYLES.map((m) => (
+                        <button
+                          key={m.key}
+                          type="button"
+                          onClick={() => updateBase({ mouth: m.key as MouthStyle })}
+                          className={`px-3 py-2 rounded-xl border text-xs font-extrabold transition cursor-pointer ${
+                            base.mouth === m.key
+                              ? 'border-indigo-500 bg-indigo-50 text-indigo-800'
+                              : 'border-gray-200 hover:bg-gray-50 text-gray-700'
+                          }`}
+                        >
+                          {m.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                {ownedPortraits.length > 0 && (
+                  <div className="pt-4 border-t border-gray-100">
+                    <h3 className="text-xs font-black text-gray-700 mb-2">🖼️ ภาพโปรไฟล์สำเร็จรูปรุ่นเก่าของฉัน</h3>
+                    <div className="flex flex-wrap gap-3">
+                      {ownedPortraits.map((url) => (
+                        <button
+                          key={url}
+                          type="button"
+                          onClick={() => setDraft((prev) => ({ ...prev, mode: 'portrait', portrait: url }))}
+                          className={`w-16 h-16 rounded-2xl overflow-hidden border-2 cursor-pointer ${
+                            draft.mode === 'portrait' && draft.portrait === url
+                              ? 'border-indigo-600 ring-2 ring-indigo-200'
+                              : 'border-gray-200'
+                          }`}
+                        >
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={url} alt="portrait" className="w-full h-full object-cover" />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {activeTab !== 'face' && (
+              <div className="space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-black text-gray-800">
+                    {SLOT_META.find((s) => s.key === activeTab)?.icon} {SLOT_META.find((s) => s.key === activeTab)?.label} ในกระเป๋าของฉัน
+                  </h3>
+                  {draft.equip?.[activeTab] && (
+                    <button
+                      type="button"
+                      onClick={() => equipItem(activeTab, null)}
+                      className="px-3 py-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 text-xs font-extrabold rounded-xl cursor-pointer"
+                    >
+                      ❌ ถอดชิ้นนี้ออก
+                    </button>
+                  )}
+                </div>
+
+                {(ownedItemsBySlot[activeTab] || []).length === 0 ? (
+                  <div className="text-center py-10 bg-gray-50 rounded-2xl border border-dashed border-gray-200 space-y-2">
+                    <p className="text-sm font-bold text-gray-500">ยังไม่มีไอเทมหมวดนี้ในกระเป๋าเลย</p>
+                    <button
+                      type="button"
+                      onClick={() => router.push('/shop')}
+                      className="px-4 py-2 bg-indigo-600 text-white text-xs font-extrabold rounded-xl cursor-pointer"
+                    >
+                      🛍️ ไปเลือกซื้อที่ร้านค้า
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+                    {(ownedItemsBySlot[activeTab] || []).map((item) => {
+                      const equipped = draft.mode !== 'portrait' && draft.equip?.[activeTab]?.key === item.item_key
+                      const r = RARITY_META[rarityOf(item.rarity)]
+                      return (
+                        <button
+                          key={item.item_key}
+                          type="button"
+                          onClick={() => equipItem(activeTab, equipped ? null : item)}
+                          className={`p-3.5 rounded-2xl border-2 text-left transition cursor-pointer flex flex-col justify-between gap-2 bg-gradient-to-b ${r.bg} ${
+                            equipped
+                              ? 'border-emerald-500 ring-2 ring-emerald-200 shadow-sm'
+                              : `${r.border} hover:scale-[1.02]`
+                          }`}
+                        >
+                          <div>
+                            <div className="flex items-center justify-between gap-1 mb-1">
+                              <span className={`text-[10px] font-black ${r.text}`}>
+                                {'★'.repeat(r.stars)} {r.label}
+                              </span>
+                              {equipped && (
+                                <span className="px-2 py-0.5 bg-emerald-500 text-white text-[10px] font-black rounded-full">
+                                  ใส่อยู่
+                                </span>
+                              )}
+                            </div>
+                            <div className="font-extrabold text-xs text-gray-800 line-clamp-2">{item.item_name}</div>
+                          </div>
+
+                          <div className="flex items-center gap-1.5 pt-1">
+                            {(item.design?.colors || []).slice(0, 3).map((c: string, i: number) => (
+                              <span
+                                key={i}
+                                className="w-4 h-4 rounded-full border border-black/15"
+                                style={{ backgroundColor: c }}
+                              />
+                            ))}
+                            {item.design?.css && (
+                              <span
+                                className="w-10 h-4 rounded-full border border-black/15"
+                                style={{ background: item.design.css }}
+                              />
+                            )}
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
         </div>
       </main>
     </div>
