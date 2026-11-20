@@ -32,6 +32,14 @@ export default function ShopPage() {
   const [baseConfig, setBaseConfig] = useState<AvatarConfig>({ v: 2, mode: 'doll', base: {}, equip: {} })
   const [previewItem, setPreviewItem] = useState<any | null>(null)
 
+  // ---- แอดมิน: ตั้งราคา ----
+  const [editPrices, setEditPrices] = useState<Record<string, string>>({})
+  const [savingPrice, setSavingPrice] = useState(false)
+  const [showAdminPanel, setShowAdminPanel] = useState(false)
+  const [bulkScope, setBulkScope] = useState<'ALL' | Slot>('ALL')
+  const [bulkMode, setBulkMode] = useState<'set' | 'percent'>('set')
+  const [bulkValue, setBulkValue] = useState('')
+
   const showToast = (msg: string) => {
     setToast(msg)
     setTimeout(() => setToast(''), 3200)
@@ -134,6 +142,93 @@ export default function ShopPage() {
     }
   }
 
+  // =====================================================================
+  // 🛠️ แอดมิน: ตั้งราคาสินค้า (รายชิ้น / ทั้งหมวด / ทั้งร้าน) ผ่าน RPC เดียว
+  // =====================================================================
+  const isAdmin = user?.role === 'admin'
+
+  const savePrices = async (updates: { item_key: string; price_coins: number }[]) => {
+    if (!user || user.role !== 'admin' || updates.length === 0) return false
+    setSavingPrice(true)
+    try {
+      const { data, error } = await supabase.rpc('admin_update_shop_prices', {
+        p_admin_id: user.id,
+        p_updates: updates,
+      })
+      if (error) throw error
+      if (!data?.ok) {
+        showToast(data?.error === 'not_admin' ? '⛔ เฉพาะแอดมินเท่านั้น' : 'บันทึกราคาไม่สำเร็จ: ' + data?.error)
+        return false
+      }
+      const map = new Map(updates.map((u) => [u.item_key, u.price_coins]))
+      setItems((prev) => prev.map((it) => (map.has(it.item_key) ? { ...it, price_coins: map.get(it.item_key) } : it)))
+      setPreviewItem((p: any) => (p && map.has(p.item_key) ? { ...p, price_coins: map.get(p.item_key) } : p))
+      showToast(`✅ อัปเดตราคาแล้ว ${data.updated ?? updates.length} ชิ้น`)
+      return true
+    } catch (err) {
+      console.error('Save price error:', err)
+      showToast('❌ บันทึกราคาไม่สำเร็จ')
+      return false
+    } finally {
+      setSavingPrice(false)
+    }
+  }
+
+  const saveSinglePrice = async (item: any) => {
+    const raw = editPrices[item.item_key]
+    const n = Math.round(Number(raw))
+    if (raw === undefined || raw === '' || !Number.isFinite(n) || n < 0) {
+      showToast('กรอกราคาเป็นตัวเลข 0 ขึ้นไป')
+      return
+    }
+    if (n === Number(item.price_coins)) return
+    const ok = await savePrices([{ item_key: item.item_key, price_coins: n }])
+    if (ok) {
+      setEditPrices((p) => {
+        const next = { ...p }
+        delete next[item.item_key]
+        return next
+      })
+    }
+  }
+
+  const bulkTargets = items.filter((it) => bulkScope === 'ALL' || it.item_type === bulkScope)
+  const bulkScopeLabel = bulkScope === 'ALL' ? 'ทั้งร้าน' : `หมวด ${SLOT_META.find((m) => m.key === bulkScope)?.label || bulkScope}`
+
+  const buildBulkUpdates = () => {
+    const v = Number(bulkValue)
+    if (bulkValue.trim() === '' || !Number.isFinite(v)) return null
+    if (bulkMode === 'set' && v < 0) return null
+    if (bulkMode === 'percent' && v <= -100) return null
+    return bulkTargets
+      .map((it) => {
+        const old = Number(it.price_coins) || 0
+        let next = bulkMode === 'set' ? v : old * (1 + v / 100)
+        next = Math.round(next)
+        if (bulkMode === 'percent' && old > 0) next = Math.max(1, next)
+        return { item_key: it.item_key, price_coins: Math.max(0, next), old }
+      })
+      .filter((u) => u.price_coins !== u.old)
+  }
+
+  const applyBulk = async () => {
+    const list = buildBulkUpdates()
+    if (!list) {
+      showToast('กรอกตัวเลขให้ถูกต้องก่อน (ราคา ≥ 0 หรือ % มากกว่า -100)')
+      return
+    }
+    if (list.length === 0) {
+      showToast('ราคาเท่าเดิมอยู่แล้ว ไม่มีอะไรต้องเปลี่ยน')
+      return
+    }
+    const sample = list[0]
+    const freeWarn = list.some((u) => u.price_coins === 0) ? '\n\n⚠️ มีสินค้าที่ราคา 0 = แจกฟรีให้ทุกคน' : ''
+    const msg = `ปรับราคา ${list.length} ชิ้น (${bulkScopeLabel})\nตัวอย่าง: ${sample.old} → ${sample.price_coins} 🪙${freeWarn}\n\nยืนยันหรือไม่?`
+    if (!window.confirm(msg)) return
+    const ok = await savePrices(list.map(({ item_key, price_coins }) => ({ item_key, price_coins })))
+    if (ok) setBulkValue('')
+  }
+
   if (loading || !user) {
     return <div className="min-h-screen flex items-center justify-center text-indigo-600 font-bold">กำลังเปิดร้านค้า...</div>
   }
@@ -228,6 +323,67 @@ export default function ShopPage() {
 
         {/* ฝั่งขวา: รายการสินค้า */}
         <div className="lg:col-span-8 space-y-4">
+          {isAdmin && (
+            <div className="bg-rose-50/95 p-4 rounded-3xl shadow-sm border-2 border-rose-200 space-y-3">
+              <button
+                type="button"
+                onClick={() => setShowAdminPanel((v) => !v)}
+                className="w-full flex items-center justify-between text-xs font-black text-rose-800 cursor-pointer"
+              >
+                <span>🛠️ แอดมิน: ตั้งราคาสินค้า (ปรับทีละชิ้นได้ที่การ์ดด้านล่างเลย)</span>
+                <span>{showAdminPanel ? '▲ ซ่อน' : '▼ ปรับเป็นหมวด / ทั้งร้าน'}</span>
+              </button>
+
+              {showAdminPanel && (
+                <div className="space-y-2.5">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <select
+                      value={bulkScope}
+                      onChange={(e) => setBulkScope(e.target.value as any)}
+                      className="px-3 py-2 rounded-xl border border-rose-200 bg-white text-xs font-extrabold text-gray-700 cursor-pointer"
+                    >
+                      <option value="ALL">ทั้งร้าน ({items.length} ชิ้น)</option>
+                      {SLOT_META.map((m) => (
+                        <option key={m.key} value={m.key}>
+                          {m.icon} หมวด {m.label} ({items.filter((it) => it.item_type === m.key).length} ชิ้น)
+                        </option>
+                      ))}
+                    </select>
+
+                    <select
+                      value={bulkMode}
+                      onChange={(e) => setBulkMode(e.target.value as any)}
+                      className="px-3 py-2 rounded-xl border border-rose-200 bg-white text-xs font-extrabold text-gray-700 cursor-pointer"
+                    >
+                      <option value="set">ตั้งเป็นราคาเดียวกันหมด</option>
+                      <option value="percent">ปรับเป็น % (ลบ = ลดราคา)</option>
+                    </select>
+
+                    <input
+                      type="number"
+                      value={bulkValue}
+                      onChange={(e) => setBulkValue(e.target.value)}
+                      placeholder={bulkMode === 'set' ? 'ราคา เช่น 50' : '% เช่น -20 หรือ 10'}
+                      className="w-40 px-3 py-2 rounded-xl border border-rose-200 bg-white text-xs font-bold outline-none focus:ring-2 focus:ring-rose-400"
+                    />
+
+                    <button
+                      type="button"
+                      onClick={applyBulk}
+                      disabled={savingPrice}
+                      className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-40 text-white text-xs font-black cursor-pointer"
+                    >
+                      {savingPrice ? '⏳ กำลังบันทึก...' : `💾 ปรับราคา ${bulkScopeLabel}`}
+                    </button>
+                  </div>
+                  <p className="text-[11px] font-bold text-rose-700">
+                    ระบบจะให้ยืนยันก่อนบันทึกทุกครั้ง • ราคา 0 = แจกฟรีทุกคน • มีผลเฉพาะสินค้าที่เปิดขายอยู่
+                  </p>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="bg-white/95 backdrop-blur-sm p-4 rounded-3xl shadow-sm border border-amber-100 space-y-3">
             <div className="flex flex-wrap gap-1.5">
               <button
@@ -352,6 +508,33 @@ export default function ShopPage() {
                         </button>
                       )}
                     </div>
+
+                    {isAdmin && (
+                      <div
+                        onClick={(e) => e.stopPropagation()}
+                        className="flex items-center gap-1.5 pt-2 border-t border-dashed border-rose-300"
+                      >
+                        <span className="text-[10px] font-black text-rose-700 shrink-0">ราคา</span>
+                        <input
+                          type="number"
+                          min={0}
+                          value={editPrices[item.item_key] ?? String(item.price_coins)}
+                          onChange={(e) => setEditPrices((p) => ({ ...p, [item.item_key]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') saveSinglePrice(item)
+                          }}
+                          className="w-full min-w-0 px-2 py-1 rounded-lg border border-rose-200 bg-white text-xs font-bold outline-none focus:ring-2 focus:ring-rose-400"
+                        />
+                        <button
+                          type="button"
+                          disabled={savingPrice || editPrices[item.item_key] === undefined}
+                          onClick={() => saveSinglePrice(item)}
+                          className="px-2 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 disabled:opacity-30 text-white text-xs font-black cursor-pointer shrink-0"
+                        >
+                          💾
+                        </button>
+                      </div>
+                    )}
                   </div>
                 )
               })}
