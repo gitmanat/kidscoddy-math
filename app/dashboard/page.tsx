@@ -294,6 +294,40 @@ function FramedAvatarBox({
   )
 }
 
+// =====================================================================
+// 🔍 เอาเมาส์ชี้ (หรือแตะบนมือถือ) แล้วขยายตัวละครให้เห็นการแต่งตัวชัดๆ
+// =====================================================================
+function HoverZoomAvatar({
+  children,
+  zoom,
+  name,
+  subtitle,
+}: {
+  children: React.ReactNode
+  zoom: React.ReactNode
+  name?: string
+  subtitle?: string
+}) {
+  const [open, setOpen] = useState(false)
+  return (
+    <div
+      className="relative shrink-0 cursor-zoom-in"
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onClick={() => setOpen((v) => !v)}
+    >
+      {children}
+      {open && (
+        <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 z-50 pointer-events-none flex flex-col items-center gap-2 bg-white rounded-3xl p-3 shadow-2xl border-2 border-indigo-200">
+          {zoom}
+          {name && <p className="text-sm font-black text-gray-800 max-w-[12rem] truncate">{name}</p>}
+          {subtitle && <p className="text-[11px] font-bold text-purple-600 max-w-[12rem] truncate">{subtitle}</p>}
+        </div>
+      )}
+    </div>
+  )
+}
+
 type Completion = { stars: number; score: number; total: number }
 const EMPTY_COMPLETION: Completion = { stars: 0, score: 0, total: 0 }
 
@@ -459,45 +493,73 @@ export default function StudentDashboard() {
     }
   }
 
+  // =====================================================================
+  // 🏅 ดึงรายชื่อคนที่ทำเสร็จของแต่ละชุดโจทย์ (สำหรับแบนเนอร์ใต้การ์ด)
+  //  - เรียงตาม "เวลาที่ทำเสร็จ" จากเร็วสุด -> ช้าสุด (คนทำก่อนอยู่ก่อน)
+  //  - ดึงเป็นหน้าๆ (Supabase ตัดที่ 1,000 แถว/ครั้ง ทำให้บางชุดหายไป)
+  //  - ไม่ JOIN ตาราง users (ถ้า RLS/คอลัมน์ผิด ทั้ง query จะพังหรือแถวหาย)
+  //  - 1 คน/1 ชุด แสดงครั้งเดียว (ใช้คะแนนที่ดีที่สุด แต่ลำดับตามเวลาที่ทำครั้งแรก)
+  // =====================================================================
   const fetchCompletionsData = async () => {
     try {
-      const { data: completionsData, error } = await supabase
-        .from('set_completions')
-        .select(`
-          set_id,
-          score,
-          total_questions,
-          completed_at,
-          users (
-            id,
-            display_name,
-            avatar_config,
-            avatar_url,
-            equipped_outfit,
-            equipped_bg
-          )
-        `)
-        .order('score', { ascending: false })
-        .order('completed_at', { ascending: false })
+      const PAGE = 1000
+      let rows: any[] = []
+      for (let from = 0; ; from += PAGE) {
+        const { data, error } = await supabase
+          .from('set_completions')
+          .select('set_id, user_id, score, total_questions, completed_at')
+          .order('completed_at', { ascending: true })
+          .order('user_id', { ascending: true })
+          .range(from, from + PAGE - 1)
 
-      if (error) throw error
+        if (error) throw error
+        if (!data || data.length === 0) break
+        rows = rows.concat(data)
+        if (data.length < PAGE) break
+      }
 
-      const grouped: Record<string, any[]> = {}
-      if (completionsData) {
-        completionsData.forEach((item: any) => {
-          if (!grouped[item.set_id]) {
-            grouped[item.set_id] = []
-          }
-          const userObj = Array.isArray(item.users) ? item.users[0] : item.users
-          if (userObj) {
-            grouped[item.set_id].push({
-              ...userObj,
-              coinsEarned: item.score || 0,
-              isPerfect: item.total_questions > 0 && item.score === item.total_questions,
-            })
-          }
+      const userIds = Array.from(new Set(rows.map((r) => r.user_id).filter(Boolean)))
+      const userMap: Record<string, any> = {}
+      for (let i = 0; i < userIds.length; i += 100) {
+        const { data: us, error: uErr } = await supabase
+          .from('users')
+          .select('id, display_name, avatar_config, avatar_url, avatar_frame, equipped_title, equipped_hat, equipped_glasses, equipped_bg')
+          .in('id', userIds.slice(i, i + 100))
+        if (uErr) throw uErr
+        ;(us || []).forEach((u) => {
+          userMap[u.id] = u
         })
       }
+
+      // รวมต่อ (ชุดโจทย์ + นักเรียน) -> คงลำดับตามเวลาที่ทำเสร็จครั้งแรก
+      const grouped: Record<string, any[]> = {}
+      const seen: Record<string, any> = {}
+      rows.forEach((item) => {
+        const user = userMap[item.user_id]
+        if (!user) {
+          console.warn('ไม่พบข้อมูลนักเรียนของ completion:', item.user_id)
+          return
+        }
+        const key = `${item.set_id}|${item.user_id}`
+        const score = item.score || 0
+        const isPerfect = item.total_questions > 0 && score >= item.total_questions
+
+        if (seen[key]) {
+          if (score > seen[key].coinsEarned) seen[key].coinsEarned = score
+          if (isPerfect) seen[key].isPerfect = true
+          return
+        }
+        const entry = {
+          ...user,
+          coinsEarned: score,
+          isPerfect,
+          completedAt: item.completed_at,
+        }
+        seen[key] = entry
+        if (!grouped[item.set_id]) grouped[item.set_id] = []
+        grouped[item.set_id].push(entry)
+      })
+
       setCompletionsBySet(grouped)
     } catch (err) {
       console.error('Error fetching completions:', err)
@@ -1161,20 +1223,40 @@ export default function StudentDashboard() {
                         {index + 1}
                       </div>
 
-                      {/* แสดงตัวละครเต็มตัว + สัตว์เลี้ยง + พื้นหลัง + กรอบแสงสว่างดับนุ่มๆ */}
-                      <FramedAvatarBox
-                        config={friendConfig}
-                        fallbackFrame={item.avatar_frame}
-                        fallbackBg={item.equipped_bg}
-                        shopBgMap={shopBgMap}
-                        sizeClass="w-16 h-20 sm:w-20 sm:h-24"
-                        animate={index < 3}
-                        badge={
-                          <span className="absolute bottom-0.5 right-0.5 px-1.5 py-0.2 rounded-md bg-indigo-600/90 text-white text-[9px] font-black z-20">
-                            Lv.{item.level || 1}
-                          </span>
+                      {/* แสดงตัวละครเต็มตัว + เอาเมาส์ชี้เพื่อขยายดูการแต่งตัว */}
+                      <HoverZoomAvatar
+                        name={item.display_name}
+                        subtitle={friendTitle}
+                        zoom={
+                          <FramedAvatarBox
+                            config={friendConfig}
+                            fallbackFrame={item.avatar_frame}
+                            fallbackBg={item.equipped_bg}
+                            shopBgMap={shopBgMap}
+                            sizeClass="w-48 h-60 sm:w-56 sm:h-72"
+                            animate
+                            badge={
+                              <span className="absolute bottom-1 right-1 px-2 py-0.5 rounded-md bg-indigo-600/90 text-white text-xs font-black z-20">
+                                Lv.{item.level || 1}
+                              </span>
+                            }
+                          />
                         }
-                      />
+                      >
+                        <FramedAvatarBox
+                          config={friendConfig}
+                          fallbackFrame={item.avatar_frame}
+                          fallbackBg={item.equipped_bg}
+                          shopBgMap={shopBgMap}
+                          sizeClass="w-16 h-20 sm:w-20 sm:h-24"
+                          animate={index < 3}
+                          badge={
+                            <span className="absolute bottom-0.5 right-0.5 px-1.5 py-0.2 rounded-md bg-indigo-600/90 text-white text-[9px] font-black z-20">
+                              Lv.{item.level || 1}
+                            </span>
+                          }
+                        />
+                      </HoverZoomAvatar>
 
                       <div>
                         <h4 className="font-extrabold text-gray-800 text-sm flex items-center gap-2">
