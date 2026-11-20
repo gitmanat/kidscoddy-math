@@ -17,8 +17,8 @@ import AssignDateField from '@/components/AssignDateField'
 // =====================================================================
 const LEVEL_REALMS = [
   { emoji: '🌱', name: 'กลั่นลมปราณ' },
-  { emoji: '🪨', name: 'สร้างรากฐาน' },
-  { emoji: '🟡', name: 'ผนึกจินตัน' },
+  { emoji: '⚔️', name: 'สร้างรากฐาน' },
+  { emoji: '🧿', name: 'ผนึกจินตัน' },
   { emoji: '🔮', name: 'กำเนิดวิญญาณ' },
   { emoji: '🌀', name: 'แปรเปลี่ยนเทพ' },
   { emoji: '🌌', name: 'ทะลวงห้วงว่างเปล่า' },
