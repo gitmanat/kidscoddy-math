@@ -44,8 +44,24 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
       router.push('/login')
       return
     }
-    setStudent(JSON.parse(storedUser))
-    fetchProblemSetAndData(JSON.parse(storedUser).id)
+    const parsedUser = JSON.parse(storedUser)
+    setStudent(parsedUser)
+    fetchProblemSetAndData(parsedUser.id)
+
+    // 🔥 เข้ามาทำแบบฝึก = นับ 1 วัน (นับได้วันละครั้ง ฝั่งเซิร์ฟเวอร์เป็นคนตัดสิน)
+    supabase
+      .rpc('record_practice_day', { p_user_id: parsedUser.id })
+      .then(({ data, error }) => {
+        if (error || !data?.ok) {
+          console.error('record_practice_day failed:', error || data)
+          return
+        }
+        setStudent((prev: any) => (prev ? { ...prev, streak_days: data.streak_days } : prev))
+        try {
+          const cur = JSON.parse(localStorage.getItem('kidscoddy_user') || '{}')
+          localStorage.setItem('kidscoddy_user', JSON.stringify({ ...cur, streak_days: data.streak_days }))
+        } catch {}
+      })
   }, [setId, router])
 
   useEffect(() => {
@@ -283,32 +299,6 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
       // (เช็กจากฐานข้อมูลด้วย กันเด็กตอบผิดแล้วตอบถูกซ้ำเพื่อเก็บ XP เพิ่ม)
       if (isCorrect && !wasAlreadyCorrect && !alreadySolvedInDb) {
         const todayStr = new Date().toISOString().split('T')[0] // YYYY-MM-DD (ใช้วันปัจจุบันของระบบ)
-        const lastActive = student.last_active_date || ''
-        let newStreak = student.streak_days || 0
-
-        // 🌟 ปรับปรุงตรรกะ Streak ให้คิดตามวันปฏิทินจริงอย่างแม่นยำ
-        if (lastActive !== todayStr) {
-          if (!lastActive) {
-            newStreak = 1
-          } else {
-            const lastDate = new Date(lastActive)
-            const currentDate = new Date(todayStr)
-            // คำนวณส่วนต่างเป็นจำนวนเต็มวัน
-            const diffTime = currentDate.getTime() - lastDate.getTime()
-            const diffDays = Math.round(diffTime / (1000 * 3600 * 24))
-
-            if (diffDays === 1) {
-              newStreak += 1 // ทำต่อเนื่องจากเมื่อวาน บวกเพิ่ม 1 วัน
-            } else if (diffDays > 1) {
-              newStreak = 1 // ขาดช่วงไปหลายวัน รีเซิตเริ่มนับ 1 ใหม่
-            } else {
-              // กรณีเวลาคาบเกี่ยวแต่ยังเป็นวันเดียวกัน
-              if (newStreak === 0) newStreak = 1
-            }
-          }
-        } else if (newStreak === 0) {
-          newStreak = 1
-        }
 
         const currentXP = (student.xp || 0) + 1
         const currentCoins = (student.coins || 0) + 1
@@ -319,7 +309,6 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           xp: currentXP,
           coins: currentCoins,
           level: newLevel,
-          streak_days: newStreak,
           last_active_date: todayStr
         }
         setStudent(updatedStudent)
@@ -328,7 +317,6 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           xp: currentXP,
           coins: currentCoins,
           level: newLevel,
-          streak_days: newStreak,
           last_active_date: todayStr
         }).eq('id', student.id)
 
@@ -376,41 +364,10 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           completed_at: new Date().toISOString()
         }, { onConflict: 'user_id,set_id' })
 
-        // 2. ตรวจสอบและอัปเดต Streak ซ้ำอีกรอบตอนกดจบภารกิจ (เพื่อความชัวร์ 100%)
+        // 2. (Streak ย้ายไปนับตอนเข้าหน้าทำแบบฝึกแล้ว — ดู record_practice_day)
         const todayStr = new Date().toISOString().split('T')[0]
-        const lastActive = student.last_active_date || ''
-        let newStreak = student.streak_days || 0
-
-        if (lastActive !== todayStr) {
-          if (!lastActive) {
-            newStreak = 1
-          } else {
-            const lastDate = new Date(lastActive)
-            const currentDate = new Date(todayStr)
-            const diffTime = currentDate.getTime() - lastDate.getTime()
-            const diffDays = Math.round(diffTime / (1000 * 3600 * 24))
-
-            if (diffDays === 1) {
-              newStreak += 1
-            } else if (diffDays > 1) {
-              newStreak = 1
-            } else {
-              if (newStreak === 0) newStreak = 1
-            }
-          }
-        } else if (newStreak === 0) {
-          newStreak = 1
-        }
-
         let bonusXP = 0
         let bonusCoins = 0
-
-        // เช็กโบนัส Streak ครบ 7 วัน
-        if (newStreak > 0 && newStreak % 7 === 0) {
-          bonusXP += 10
-          bonusCoins += 10
-          bonusMsg = `🎉 สุดยอด! ทำ Streak ต่อเนื่องครบ ${newStreak} วัน รับโบนัสพิเศษทันที +10 XP และ +10 เหรียญทอง!\n`
-        }
 
         // 🌟 3. เช็กเงื่อนไขภารกิจพิเศษ (Special Quests)
         const { data: questMatch } = await supabase
@@ -440,12 +397,21 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
           }
         }
 
+        // 🎁 แจ้งเด็กถ้ามีกล่องของขวัญ Streak รอรับ (ไปกดรับที่หน้าแดชบอร์ด)
+        try {
+          const { data: sInfo } = await supabase.rpc('get_streak_status', { p_user_id: student.id })
+          if (sInfo?.ok && sInfo.pending > 0) {
+            bonusMsg += `${bonusMsg ? '\n' : ''}🎁 สะสมครบ ${sInfo.days_per_reward} วันแล้ว! กลับไปหน้าแดชบอร์ดเพื่อเปิดกล่องของขวัญรับ ${sInfo.reward_coins} เหรียญ และ ${sInfo.reward_xp ?? 0} XP`
+          }
+        } catch (e) {
+          console.error('get_streak_status failed:', e)
+        }
+
         const currentXP = (student.xp || 0) + bonusXP
         const currentCoins = (student.coins || 0) + bonusCoins
         const newLevel = Math.floor(currentXP / 50) + 1
 
         await supabase.from('users').update({
-          streak_days: newStreak,
           last_active_date: todayStr,
           xp: currentXP,
           coins: currentCoins,
@@ -454,7 +420,6 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
 
         const updatedStudent = { 
           ...student, 
-          streak_days: newStreak, 
           last_active_date: todayStr,
           xp: currentXP,
           coins: currentCoins,
@@ -563,9 +528,9 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
               </div>
             </div>
 
-            {/* แสดงกล่องแจ้งเตือนโบนัสพิเศษ Streak ครบ 7 วัน */}
+            {/* แสดงกล่องแจ้งเตือนโบนัส (ภารกิจพิเศษ / กล่องของขวัญ Streak รอรับ) */}
             {summaryData.bonusMessage && (
-              <div className="bg-amber-50 border-2 border-amber-300 p-4 rounded-2xl text-amber-900 text-xs font-extrabold animate-pulse shadow-sm">
+              <div className="bg-amber-50 border-2 border-amber-300 p-4 rounded-2xl text-amber-900 text-xs font-extrabold animate-pulse shadow-sm whitespace-pre-line">
                 {summaryData.bonusMessage}
               </div>
             )}

@@ -361,6 +361,21 @@ export default function StudentDashboard() {
   const [viewMode, setViewMode] = useState<'day' | 'backlog'>('day')
   const [unreadCount, setUnreadCount] = useState(0)
 
+  // ---- Streak / กล่องของขวัญ ----
+  const [streakInfo, setStreakInfo] = useState<any>(null)
+  const [showGift, setShowGift] = useState(false)
+  const [claiming, setClaiming] = useState(false)
+  const [giftResult, setGiftResult] = useState<{ coins: number; xp: number } | null>(null)
+  const [giftError, setGiftError] = useState('')
+  const [showStreakSettings, setShowStreakSettings] = useState(false)
+  const [setDaysInput, setSetDaysInput] = useState('')
+  const [setCoinsInput, setSetCoinsInput] = useState('')
+  const [setXpInput, setSetXpInput] = useState('')
+  const [showHistory, setShowHistory] = useState(false)
+  const [historyList, setHistoryList] = useState<any[]>([])
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [savingStreakSettings, setSavingStreakSettings] = useState(false)
+
   useEffect(() => {
     const t = toLocalDateStr(new Date())
     setTodayStr(t)
@@ -403,6 +418,10 @@ export default function StudentDashboard() {
         setStudent(latestUser)
         localStorage.setItem('kidscoddy_user', JSON.stringify(latestUser))
       }
+
+      // สถานะ Streak: ถ้ามีกล่องของขวัญค้างอยู่ให้เด้งขึ้นมาเลย
+      const sInfo = await refreshStreak(userId)
+      if (sInfo?.pending > 0) setShowGift(true)
 
       const { data: specialQuestsData } = await supabase
         .from('special_quests')
@@ -500,6 +519,99 @@ export default function StudentDashboard() {
   //  - ไม่ JOIN ตาราง users (ถ้า RLS/คอลัมน์ผิด ทั้ง query จะพังหรือแถวหาย)
   //  - 1 คน/1 ชุด แสดงครั้งเดียว (ใช้คะแนนที่ดีที่สุด แต่ลำดับตามเวลาที่ทำครั้งแรก)
   // =====================================================================
+  const refreshStreak = async (userId: string) => {
+    try {
+      const { data, error } = await supabase.rpc('get_streak_status', { p_user_id: userId })
+      if (error) throw error
+      if (data?.ok) {
+        setStreakInfo(data)
+        return data
+      }
+    } catch (err) {
+      console.error('Streak status error:', err)
+    }
+    return null
+  }
+
+  const claimGift = async () => {
+    if (!student || claiming) return
+    setClaiming(true)
+    setGiftError('')
+    try {
+      const { data, error } = await supabase.rpc('claim_streak_reward', { p_user_id: student.id })
+      if (error) throw error
+      if (!data?.ok) {
+        setGiftError(data?.error === 'nothing_to_claim' ? 'รับรางวัลนี้ไปแล้วนะ' : 'รับรางวัลไม่สำเร็จ ลองใหม่อีกครั้ง')
+        await refreshStreak(student.id)
+        return
+      }
+      const updated = { ...student, coins: data.coins, xp: data.xp, level: data.level }
+      setStudent(updated)
+      localStorage.setItem('kidscoddy_user', JSON.stringify(updated))
+      setGiftResult({ coins: data.reward, xp: data.reward_xp })
+      await refreshStreak(student.id)
+    } catch (err) {
+      console.error('Claim error:', err)
+      setGiftError('รับรางวัลไม่สำเร็จ ลองใหม่อีกครั้ง')
+    } finally {
+      setClaiming(false)
+    }
+  }
+
+  const openHistory = async () => {
+    if (!student) return
+    setShowHistory(true)
+    setLoadingHistory(true)
+    try {
+      const { data, error } = await supabase.rpc('get_streak_reward_history', { p_user_id: student.id })
+      if (error) throw error
+      setHistoryList(data?.items || [])
+    } catch (err) {
+      console.error('History error:', err)
+      setHistoryList([])
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
+
+  const closeGift = () => {
+    setShowGift(false)
+    setGiftResult(null)
+    setGiftError('')
+  }
+
+  const saveStreakSettings = async () => {
+    if (!student) return
+    const d = Math.round(Number(setDaysInput))
+    const c = Math.round(Number(setCoinsInput))
+    const x = Math.round(Number(setXpInput))
+    if (!Number.isFinite(d) || d < 1 || !Number.isFinite(c) || c < 0 || !Number.isFinite(x) || x < 0) {
+      alert('จำนวนวันต้อง ≥ 1 ส่วนคอยน์และ XP ต้อง ≥ 0')
+      return
+    }
+    setSavingStreakSettings(true)
+    try {
+      const { data, error } = await supabase.rpc('admin_set_streak_settings', {
+        p_admin_id: student.id,
+        p_days: d,
+        p_coins: c,
+        p_xp: x,
+      })
+      if (error) throw error
+      if (!data?.ok) {
+        alert(data?.error === 'not_admin' ? 'เฉพาะแอดมินเท่านั้น' : 'บันทึกไม่สำเร็จ: ' + data?.error)
+        return
+      }
+      await refreshStreak(student.id)
+      setShowStreakSettings(false)
+    } catch (err) {
+      console.error('Save streak settings error:', err)
+      alert('บันทึกไม่สำเร็จ')
+    } finally {
+      setSavingStreakSettings(false)
+    }
+  }
+
   const fetchCompletionsData = async () => {
     try {
       const PAGE = 1000
@@ -841,10 +953,51 @@ export default function StudentDashboard() {
 
             {/* สถิติ Streak, Coins, XP */}
             <div className="grid grid-cols-3 gap-2 w-full md:w-auto">
-              <div className="bg-white/15 backdrop-blur-md border border-white/25 px-3 py-2.5 rounded-2xl flex flex-col items-center justify-center text-center">
+              <div
+                onClick={() => {
+                  if ((streakInfo?.pending || 0) > 0) setShowGift(true)
+                }}
+                className={`relative bg-white/15 backdrop-blur-md border border-white/25 px-3 py-2.5 rounded-2xl flex flex-col items-center justify-center text-center ${
+                  (streakInfo?.pending || 0) > 0 ? 'cursor-pointer ring-2 ring-yellow-300 animate-pulse' : ''
+                }`}
+              >
                 <span className="text-xl animate-pulse">🔥</span>
                 <span className="text-[10px] uppercase tracking-wider text-amber-200 font-extrabold mt-0.5">Streak</span>
                 <span className="text-sm font-black">{student?.streak_days || 0} วัน</span>
+                {streakInfo && (
+                  <span className="text-[10px] font-bold text-amber-100 mt-0.5">
+                    {streakInfo.pending > 0 ? '🎁 กดรับรางวัล!' : `อีก ${streakInfo.days_to_next} วัน 🎁`}
+                  </span>
+                )}
+                {streakInfo && (
+                  <button
+                    type="button"
+                    title="ประวัติการรับรางวัล"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      openHistory()
+                    }}
+                    className="absolute top-1 left-1 w-6 h-6 rounded-lg bg-white/25 hover:bg-white/40 text-[11px] cursor-pointer"
+                  >
+                    📜
+                  </button>
+                )}
+                {student?.role === 'admin' && streakInfo && (
+                  <button
+                    type="button"
+                    title="ตั้งค่ารางวัล Streak"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setSetDaysInput(String(streakInfo.days_per_reward))
+                      setSetCoinsInput(String(streakInfo.reward_coins))
+                      setSetXpInput(String(streakInfo.reward_xp ?? 0))
+                      setShowStreakSettings(true)
+                    }}
+                    className="absolute top-1 right-1 w-6 h-6 rounded-lg bg-white/25 hover:bg-white/40 text-[11px] cursor-pointer"
+                  >
+                    ⚙️
+                  </button>
+                )}
               </div>
 
               <div className="bg-white/15 backdrop-blur-md border border-white/25 px-3 py-2.5 rounded-2xl flex flex-col items-center justify-center text-center">
@@ -1287,6 +1440,203 @@ export default function StudentDashboard() {
           )}
         </div>
       </main>
+
+      {/* 🎁 กล่องของขวัญ Streak */}
+      {showGift && streakInfo && (giftResult !== null || streakInfo.pending > 0) && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => !claiming && closeGift()}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-gradient-to-b from-amber-50 to-white rounded-3xl p-8 max-w-sm w-full text-center space-y-4 shadow-2xl border-4 border-amber-300"
+          >
+            {giftResult === null ? (
+              <>
+                <div className="text-7xl animate-bounce">🎁</div>
+                <h3 className="text-xl font-black text-gray-800">ขยันมาก! ครบ {streakInfo.days_per_reward} วันแล้ว</h3>
+                <p className="text-sm font-bold text-amber-700">
+                  มีกล่องของขวัญรอคุณอยู่ รับรางวัล {streakInfo.reward_coins} 🪙 และ {streakInfo.reward_xp ?? 0} ✨ XP
+                </p>
+                {giftError && <p className="text-xs font-bold text-rose-600">{giftError}</p>}
+                <button
+                  type="button"
+                  onClick={claimGift}
+                  disabled={claiming}
+                  className="w-full py-3 rounded-2xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 disabled:opacity-50 text-white font-black shadow-lg cursor-pointer"
+                >
+                  {claiming ? '⏳ กำลังเปิด...' : '🎉 เปิดกล่องของขวัญ'}
+                </button>
+                <button
+                  type="button"
+                  onClick={closeGift}
+                  disabled={claiming}
+                  className="text-xs font-bold text-gray-400 hover:text-gray-600 cursor-pointer"
+                >
+                  ไว้ก่อน
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="text-7xl">🎉</div>
+                <h3 className="text-xl font-black text-gray-800">ได้รับรางวัลแล้ว!</h3>
+                <p className="text-3xl font-black text-amber-600">+{giftResult.coins} 🪙</p>
+                <p className="text-2xl font-black text-purple-600">+{giftResult.xp} ✨ XP</p>
+                {streakInfo.pending > 0 && (
+                  <p className="text-xs font-bold text-purple-600">ยังมีกล่องของขวัญรออีก {streakInfo.pending} กล่อง!</p>
+                )}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setGiftResult(null)
+                    if (!(streakInfo.pending > 0)) closeGift()
+                  }}
+                  className="w-full py-3 rounded-2xl bg-emerald-600 hover:bg-emerald-700 text-white font-black cursor-pointer"
+                >
+                  {streakInfo.pending > 0 ? 'เปิดกล่องถัดไป' : 'เยี่ยมเลย!'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    closeGift()
+                    openHistory()
+                  }}
+                  className="w-full py-2.5 rounded-2xl bg-amber-100 hover:bg-amber-200 text-amber-800 text-sm font-black cursor-pointer"
+                >
+                  📜 ดูประวัติการรับรางวัล
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* 📜 ประวัติการรับกล่องของขวัญ */}
+      {showHistory && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => setShowHistory(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl p-6 max-w-md w-full space-y-4 shadow-2xl border border-amber-200 max-h-[85vh] flex flex-col"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-gray-800">📜 ประวัติกล่องของขวัญ Streak</h3>
+              <button
+                type="button"
+                onClick={() => setShowHistory(false)}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 font-black cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            {streakInfo && (
+              <div className="rounded-2xl bg-amber-50 border border-amber-200 px-4 py-3 text-xs font-bold text-amber-800 flex items-center justify-between gap-2">
+                <span>
+                  สะสมแล้ว {streakInfo.streak_days} วัน • ครบทุก {streakInfo.days_per_reward} วัน ได้ {streakInfo.reward_coins} 🪙 + {streakInfo.reward_xp ?? 0} ✨
+                </span>
+                {streakInfo.pending > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowHistory(false)
+                      setShowGift(true)
+                    }}
+                    className="px-3 py-1.5 rounded-full bg-amber-500 hover:bg-amber-600 text-white font-black whitespace-nowrap cursor-pointer"
+                  >
+                    🎁 รับ {streakInfo.pending} กล่อง
+                  </button>
+                )}
+              </div>
+            )}
+
+            <div className="overflow-y-auto space-y-2 pr-1">
+              {loadingHistory ? (
+                <p className="text-center text-xs font-bold text-gray-400 py-6">⏳ กำลังโหลด...</p>
+              ) : historyList.length === 0 ? (
+                <p className="text-center text-xs font-bold text-gray-400 py-6">ยังไม่มีประวัติการรับกล่องของขวัญ</p>
+              ) : (
+                historyList.map((h, i) => (
+                  <div key={i} className="flex items-center justify-between gap-3 rounded-2xl border border-gray-100 bg-gray-50 px-4 py-2.5">
+                    <div className="min-w-0">
+                      <p className="text-sm font-black text-gray-800">🎁 กล่องที่ {h.box_no}</p>
+                      <p className="text-[11px] font-bold text-gray-500">
+                        {new Date(h.claimed_at).toLocaleString('th-TH', { dateStyle: 'medium', timeStyle: 'short' })} • สะสม {h.streak_days} วัน
+                      </p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-sm font-black text-amber-600">+{h.coins} 🪙</p>
+                      <p className="text-xs font-black text-purple-600">+{h.xp} ✨</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ⚙️ แอดมิน: ตั้งค่ารางวัล Streak */}
+      {showStreakSettings && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
+          onClick={() => !savingStreakSettings && setShowStreakSettings(false)}
+        >
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl p-6 max-w-sm w-full space-y-4 shadow-2xl border border-rose-200"
+          >
+            <h3 className="text-base font-black text-gray-800">⚙️ ตั้งค่ารางวัล Streak</h3>
+            <label className="block space-y-1">
+              <span className="text-xs font-extrabold text-gray-600">ครบกี่วันได้กล่องของขวัญ</span>
+              <input
+                type="number"
+                min={1}
+                value={setDaysInput}
+                onChange={(e) => setSetDaysInput(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-bold outline-none focus:ring-2 focus:ring-rose-400"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-extrabold text-gray-600">คอยน์ที่ได้ต่อ 1 กล่อง</span>
+              <input
+                type="number"
+                min={0}
+                value={setCoinsInput}
+                onChange={(e) => setSetCoinsInput(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-bold outline-none focus:ring-2 focus:ring-rose-400"
+              />
+            </label>
+            <label className="block space-y-1">
+              <span className="text-xs font-extrabold text-gray-600">XP ที่ได้ต่อ 1 กล่อง</span>
+              <input
+                type="number"
+                min={0}
+                value={setXpInput}
+                onChange={(e) => setSetXpInput(e.target.value)}
+                className="w-full px-3 py-2 rounded-xl border border-gray-200 text-sm font-bold outline-none focus:ring-2 focus:ring-rose-400"
+              />
+            </label>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setShowStreakSettings(false)}
+                disabled={savingStreakSettings}
+                className="flex-1 py-2.5 rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-700 text-xs font-extrabold cursor-pointer"
+              >
+                ยกเลิก
+              </button>
+              <button
+                type="button"
+                onClick={saveStreakSettings}
+                disabled={savingStreakSettings}
+                className="flex-1 py-2.5 rounded-xl bg-rose-600 hover:bg-rose-700 disabled:opacity-50 text-white text-xs font-black cursor-pointer"
+              >
+                {savingStreakSettings ? '⏳ กำลังบันทึก...' : '💾 บันทึก'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
