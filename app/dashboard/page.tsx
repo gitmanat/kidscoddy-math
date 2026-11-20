@@ -48,6 +48,11 @@ const getLevelTitle = (level: number) => {
   return `${realm.emoji} ${realm.name} ${stage === 10 ? 'ขั้นสมบูรณ์' : `ชั้น ${stage}`}`
 }
 
+// ฉายาที่แสดง: ใช้ที่เด็กสวมอยู่ใน avatar_config เท่านั้น ถ้าถอดออกแล้วให้ใช้ฉายาตามเลเวล
+// (คอลัมน์ equipped_title รุ่นเก่าใช้เฉพาะคนที่ยังไม่เคยมี avatar_config)
+const resolveDisplayTitle = (u: any, cfg: any, level: number) =>
+  cfg?.equip?.title?.name || (!u?.avatar_config ? u?.equipped_title : '') || getLevelTitle(level)
+
 const XP_PER_LEVEL = 50 // ต้องตรงกับสูตรเลเวล floor(xp/50)+1 ที่ใช้ในหน้าทำแบบฝึกและ SQL
 const MAX_TITLE_LEVEL = 100
 
@@ -994,7 +999,7 @@ export default function StudentDashboard() {
                     title="ดูเส้นทางเลเวลทั้งหมด"
                     className="text-xs font-bold text-purple-200 hover:text-white cursor-pointer transition"
                   >
-                    {studentConfig.equip?.title?.name || student?.equipped_title || getLevelTitle(currentLevel)}
+                    {resolveDisplayTitle(student, studentConfig, currentLevel)}
                   </button>
                 </div>
                 <h2 className="text-xl md:text-2xl font-black">
@@ -1424,7 +1429,7 @@ export default function StudentDashboard() {
                 else if (index === 2) rankBadge = 'bg-amber-700 text-white font-black'
 
                 const friendConfig = readAvatarConfig(item)
-                const friendTitle = friendConfig.equip?.title?.name || item.equipped_title || '🌱 นักคำนวณฝึกหัด'
+                const friendTitle = resolveDisplayTitle(item, friendConfig, item.level || 1)
 
                 return (
                   <div
