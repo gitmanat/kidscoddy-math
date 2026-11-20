@@ -16,6 +16,10 @@ import { AgeMarks } from '@/components/avatar/aging'
 import { DragonPet } from '@/components/avatar/dragon'
 import { NewWeapon, isNewWeapon } from '@/components/avatar/weapons'
 import { NewPet, isNewPet } from '@/components/avatar/pets'
+import { ExtraSleeve, NEW_OUTFITS, OUTFIT_ZONE, PatternOverlay } from '@/components/avatar/outfits'
+import { NewShoe, isNewShoe } from '@/components/avatar/shoes'
+import { NEW_HAIR_KEYS, NewHairBack, NewHairFront } from '@/components/avatar/hair'
+import { NewHat, isNewHat } from '@/components/avatar/hats'
 
 // =====================================================================
 // 🏯 ตัวละครหนังจีนโบราณ — ฮ่องเต้ / ฮองเฮา / สนม / จอมยุทธ์ / ขุนนาง / แม่ทัพ / พระ / นักพรต
@@ -260,8 +264,9 @@ const SLEEVE: Record<string, SleeveKind> = {
 function topPal(d?: ItemDesign) {
   const raw = d?.shape || 'commoner'
   const shape = TOP_ALIAS[raw] || raw
-  const key = TOP_DEFAULTS[shape] ? shape : 'commoner'
-  return { shape: key, ...pal(d, TOP_DEFAULTS[key]) }
+  const defs = TOP_DEFAULTS[shape] || NEW_OUTFITS[shape]?.defaults
+  const key = defs ? shape : 'commoner'
+  return { shape: key, ...pal(d, defs || TOP_DEFAULTS.commoner) }
 }
 
 /* ปกเสื้อไขว้ (เจียวหลิ่ง) */
@@ -275,7 +280,20 @@ function Lapel({ c, w = 4, y2 = 196 }: { c: string; w?: number; y2?: number }) {
 }
 
 /* ============================ ชุด (ลำตัว) ============================ */
+/** ชุด: ชุดใหม่ตามอาชีพ (outfits.tsx) หรือชุดเดิม + ลายปัก (design.variant.pattern) */
 function Top({ d, ctx }: { d?: ItemDesign; ctx: Ctx }) {
+  const { shape, c1, c2, c3 } = topPal(d)
+  const nw = NEW_OUTFITS[shape]
+  const pattern = d?.variant?.pattern
+  return (
+    <g>
+      {nw ? nw.render({ c1, c2, c3, neck: ctx.skinDark, edge: shade(c1, -28) }) : <TopBase d={d} ctx={ctx} />}
+      {pattern && pattern !== 'none' && <PatternOverlay kind={pattern} zone={OUTFIT_ZONE[shape] || 'chest'} color={shade(c3, -5)} />}
+    </g>
+  )
+}
+
+function TopBase({ d, ctx }: { d?: ItemDesign; ctx: Ctx }) {
   const { shape, c1, c2, c3 } = topPal(d)
   const neck = ctx.skinDark
   const g = `${ctx.uid}-top`
@@ -493,7 +511,7 @@ function Top({ d, ctx }: { d?: ItemDesign; ctx: Ctx }) {
 // วาดเป็นแขนซ้าย แล้วใช้ mirror สำหรับแขนขวา
 function Arm({ top, skin }: { top: ItemDesign; skin: string }) {
   const { shape, c1, c2, c3 } = topPal(top)
-  const kind = SLEEVE[shape] || 'short'
+  const kind: string = SLEEVE[shape] || NEW_OUTFITS[shape]?.sleeve || 'short'
   const edge = shade(c1, -26)
   const ex = shape === 'imperial' ? 7 : shape === 'empress' ? 3 : 0
 
@@ -548,6 +566,7 @@ function Arm({ top, skin }: { top: ItemDesign; skin: string }) {
           <rect x="51" y="178" width="23" height="8" rx="3" fill={c2} />
         </g>
       )}
+      {!['wide', 'flow', 'armor', 'short'].includes(kind) && <ExtraSleeve kind={kind} c1={c1} c2={c2} c3={c3} edge={edge} />}
     </g>
   )
 }
@@ -608,9 +627,10 @@ function LegWear({ d, skin }: { d?: ItemDesign; skin: string }) {
 /* ============================ รองเท้า (วาดเป็นคู่) ============================ */
 const SHOE_ALIAS: Record<string, string> = { sneaker: 'kungfu', speed: 'cloud', magic: 'cloud' }
 
-function ShoeLeft({ d }: { d?: ItemDesign; ctx?: Ctx }) {
+function ShoeLeft({ d, ctx }: { d?: ItemDesign; ctx?: Ctx }) {
   const raw = d?.shape || 'kungfu'
   const shape = SHOE_ALIAS[raw] || raw
+  if (isNewShoe(shape)) return <NewShoe shape={shape} d={d} skin={ctx?.skin || '#f7c9a0'} />
   const { c1, c2, c3 } = pal(d, ['#1f2937', '#e5e7eb', '#ffffff'])
 
   /* รองเท้าฟุตผ้า: ปลายงอน ลอยบนเมฆ */
@@ -695,6 +715,8 @@ const hairKey = (s: string) => HAIR_ALIAS[s] || s
 function HairBack({ style, color }: { style: string; color: string }) {
   const dk = shade(color, -18)
   const common = { fill: color, stroke: dk, strokeWidth: 1.5, strokeLinejoin: 'round' as const }
+  const hk = hairKey(style)
+  if (NEW_HAIR_KEYS.includes(hk)) return <NewHairBack style={hk} color={color} />
   switch (hairKey(style)) {
     /* มวยผมสูงของชาย (จี้) */
     case 'topknot':
@@ -756,6 +778,8 @@ function HairFront({ style, color }: { style: string; color: string }) {
   const dk = shade(color, -18)
   const common = { fill: color, stroke: dk, strokeWidth: 1.5, strokeLinejoin: 'round' as const }
   const cap = 'M53 94 Q48 48 100 46 Q152 48 147 94 Q140 70 120 68 Q100 80 80 68 Q60 70 53 94 Z'
+  const hk = hairKey(style)
+  if (NEW_HAIR_KEYS.includes(hk)) return <NewHairFront style={hk} color={color} />
   switch (hairKey(style)) {
     case 'topknot':
       return (
@@ -972,6 +996,7 @@ const HAT_ALIAS: Record<string, string> = {
 function Hat({ d, ctx }: { d?: ItemDesign; ctx: Ctx }) {
   const raw = d?.shape || 'scholar'
   const shape = HAT_ALIAS[raw] || raw
+  if (isNewHat(shape)) return <NewHat shape={shape} d={d} />
   const g = `${ctx.uid}-hat`
 
   switch (shape) {
@@ -1992,4 +2017,4 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
       )}
     </svg>
   )
-}
+}

@@ -7,7 +7,7 @@ import type { ItemDesign } from './avatar'
 export interface CatalogItem {
   item_key: string
   item_name: string
-  item_type: 'pet' | 'hand'
+  item_type: 'pet' | 'hand' | 'outfit' | 'shoes' | 'hat'
   rarity: 'common' | 'rare' | 'epic' | 'legendary'
   design: ItemDesign
 }
@@ -21,6 +21,18 @@ const hand = (key: string, name: string, rarity: CatalogItem['rarity'], shape: s
 
 const pet = (key: string, name: string, rarity: CatalogItem['rarity'], shape: string, colors: string[], variant?: Record<string, string>): CatalogItem => ({
   item_key: `pet_${key}`, item_name: name, item_type: 'pet', rarity, design: { shape, colors, ...(variant ? { variant } : {}) },
+})
+
+const outfit = (key: string, name: string, rarity: CatalogItem['rarity'], shape: string, colors?: string[], pattern?: string): CatalogItem => ({
+  item_key: `outfit_${key}`, item_name: name, item_type: 'outfit', rarity,
+  design: { shape, ...(colors ? { colors } : {}), ...(pattern ? { variant: { pattern } } : {}) },
+})
+const shoe = (key: string, name: string, rarity: CatalogItem['rarity'], shape: string, colors: string[], extra?: Partial<ItemDesign>): CatalogItem => ({
+  item_key: `shoes_${key}`, item_name: name, item_type: 'shoes', rarity, design: { shape, colors, ...(extra || {}) },
+})
+
+const hat = (key: string, name: string, rarity: CatalogItem['rarity'], shape: string, colors: string[]): CatalogItem => ({
+  item_key: `hat_${key}`, item_name: name, item_type: 'hat', rarity, design: { shape, colors },
 })
 
 export const NEW_SHAPE_ITEMS: CatalogItem[] = [
@@ -73,4 +85,40 @@ export const NEW_SHAPE_ITEMS: CatalogItem[] = [
   pet('fox1', 'จิ้งจอกไฟ', 'common', 'fox', ['#f97316', '#ffffff', '#1f2937'], { tails: '1' }),
   pet('fox3', 'จิ้งจอกสามหาง', 'rare', 'fox', ['#f97316', '#ffffff', '#1f2937'], { tails: '3' }),
   pet('fox9_silver', 'จิ้งจอกเก้าหางเงิน', 'legendary', 'fox', ['#e5e7eb', '#ffffff', '#475569'], { tails: '9' }),
+
+  // ---- ชุดตามอาชีพ (เฟส 3) ----
+  outfit('farmer', 'ชุดชาวนาเสื้อฟาง', 'common', 'farmer'),
+  outfit('beggar', 'ชุดขอทานเก้าชั้น', 'common', 'beggar'),
+  outfit('physician', 'ชุดหมอยาสมุนไพร', 'rare', 'physician'),
+  outfit('merchant', 'ชุดพ่อค้าไหมทอง', 'rare', 'merchant', undefined, 'coin'),
+  outfit('swordswoman', 'ชุดนักดาบหญิงริบบิ้นส้ม', 'rare', 'swordswoman'),
+  outfit('eunuch', 'ชุดขันทีวังหลวง', 'rare', 'eunuch'),
+  outfit('judge', 'ชุดผู้พิพากษาตุลาการ', 'epic', 'judge'),
+  outfit('assassin', 'ชุดนักฆ่าเงามืด', 'epic', 'assassin'),
+  outfit('jinyiwei', 'ชุดองครักษ์จิ่นอีเว่ย', 'epic', 'jinyiwei'),
+  outfit('dancer', 'ชุดนางรำแขนน้ำ', 'epic', 'dancer'),
+  // ---- ลายปักบนชุดเดิม (ทรงเดิม ลายใหม่ ขายในราคาสูงกว่าเล็กน้อย) ----
+  outfit('wuxia_cloud', 'ชุดจอมยุทธ์ลายเมฆมงคล', 'rare', 'wuxia', undefined, 'cloud'),
+  outfit('scholar_wave', 'ชุดบัณฑิตลายคลื่น', 'rare', 'scholar', undefined, 'wave'),
+  outfit('taoist_bamboo', 'ชุดนักพรตลายไผ่', 'rare', 'taoist', undefined, 'bamboo'),
+  outfit('concubine_plum', 'ชุดสนมลายดอกเหมย', 'epic', 'concubine', undefined, 'plum'),
+  outfit('imperial_dragon', 'หลงเผาลายมังกรเล็ก', 'legendary', 'imperial', undefined, 'dragon'),
+  // ---- รองเท้าทรงใหม่ (เฟส 3) ----
+  shoe('straw', 'รองเท้าฟางสาน', 'common', 'straw', ['#92400e', '#d6b76a', '#a16207']),
+  shoe('wooden', 'รองเท้าไม้ฟันคู่', 'common', 'wooden', ['#78350f', '#dc2626', '#d6b76a']),
+  shoe('tiger', 'รองเท้าหัวเสือ', 'rare', 'tiger', ['#f59e0b', '#fff7ed', '#1f2937']),
+  shoe('riding', 'บู๊ตขี่ม้าขอบขน', 'rare', 'riding', ['#78350f', '#f1f5f9', '#fbbf24']),
+  shoe('platform', 'รองเท้าฐานสูงราชสำนัก', 'epic', 'platform', ['#be185d', '#f8fafc', '#fbbf24']),
+
+  // ---- หมวกตามอาชีพ (เฟส 4) ----
+  hat('farmer', 'หมวกฟางชาวนา', 'common', 'farmer', ['#d6b76a', '#a16207', '#dc2626']),
+  hat('beggar', 'หมวกฟางขาดขอทาน', 'common', 'beggar', ['#d6b76a', '#3b82f6', '#dc2626']),
+  hat('merchant', 'หมวกพ่อค้าปุ่มแดง', 'common', 'merchant', ['#111827', '#fbbf24', '#dc2626']),
+  hat('physician', 'หมวกหมอยา', 'rare', 'physician', ['#4d7c0f', '#f8fafc', '#f97316']),
+  hat('bandana', 'ผ้าโพกหัวนักฆ่า', 'rare', 'bandana', ['#111827', '#b91c1c', '#7f1d1d']),
+  hat('eunuch', 'หมวกขันทีวังหลวง', 'rare', 'eunuch', ['#111827', '#dc2626', '#fbbf24']),
+  hat('dancer', 'มงกุฎดอกไม้นางรำ', 'epic', 'dancer', ['#f472b6', '#a78bfa', '#fde68a']),
+  hat('guard', 'หมวกองครักษ์จิ่นอีเว่ย', 'epic', 'guard', ['#111827', '#fbbf24', '#dc2626']),
+  hat('judge', 'หมวกผู้พิพากษาพระจันทร์เสี้ยว', 'epic', 'judge', ['#111827', '#fbbf24', '#34d399']),
+  hat('princess', 'มงกุฎองค์หญิงผีเสื้อ', 'legendary', 'princess', ['#fbbf24', '#f472b6', '#ffffff']),
 ]

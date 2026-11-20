@@ -16,6 +16,8 @@ export type Slot = 'outfit' | 'pants' | 'shoes' | 'hat' | 'glasses' | 'back' | '
 export type HairStyle =
   // ทรงผมจีนโบราณ
   | 'topknot' | 'ponytail' | 'long' | 'bob' | 'twin' | 'empress' | 'concubine' | 'bald'
+  // ทรงผมตามวัยและบทบาท (เฟส 4)
+  | 'tuft' | 'bowl' | 'pigtails' | 'lowbun' | 'braid' | 'halfup' | 'elder' | 'wild' | 'princess' | 'sidebun'
   // ของเดิม (ยังรองรับ → Character.tsx แปลงให้)
   | 'short' | 'spiky' | 'curly'
 export type EyeStyle = 'round' | 'happy' | 'sparkle' | 'sleepy' | 'wink' | 'phoenix' | 'sword'
@@ -49,6 +51,8 @@ export interface ItemDesign {
   glow?: boolean // shoes 'cloud': มีก้อนเมฆลอยตามหลัง
   /**
    * ตัวแปรประกอบชิ้นส่วน — shape เดียวกันแต่รูปทรงต่างกันจริง
+   *  - outfit (ทุกชุด)   : pattern = none|cloud|wave|bamboo|plum|coin|dragon (ลายปัก)
+   *  - pet 'fox'         : tails = 1|3|5|9
    *  - pet 'dragon'      : head = eastern|lion|fish · body = serpent|coil · element = none|fire|water|thunder|ice|jade
    *  - hand 'sword_chinese': blade = straight|flame|leaf|crystal · hilt = wing|disc · aura = none|fire|ice|thunder|jade
    *  - hand 'saber'      : blade = curved|broad|ringed · aura = (เหมือนกระบี่)
@@ -90,15 +94,26 @@ export const HAIR_COLORS = [
   '#1a1a1a', '#2b2b2b', '#4a2c17', '#6b4226', '#8b8b8b', '#e5e7eb', '#f2c94c', '#991b1b', '#1e3a8a', '#7c3aed',
 ]
 
-export const HAIR_STYLES: { key: HairStyle; label: string }[] = [
-  { key: 'topknot', label: 'มวยผมสูง (บุรุษ)' },
-  { key: 'ponytail', label: 'หางม้าจอมยุทธ์' },
+/** ages = วัยที่ทรงผมนี้เหมาะ (ไว้จัดกลุ่ม/แนะนำใน UI) */
+export const HAIR_STYLES: { key: HairStyle; label: string; ages?: AgeStyle[] }[] = [
+  { key: 'topknot', label: 'มวยผมสูง (บุรุษ)', ages: ['teen', 'adult'] },
+  { key: 'ponytail', label: 'หางม้าจอมยุทธ์', ages: ['teen', 'adult'] },
   { key: 'long', label: 'ผมสยายยาว' },
   { key: 'bob', label: 'ผมประบ่า' },
-  { key: 'twin', label: 'สองมวย (นางกำนัล)' },
-  { key: 'concubine', label: 'มวยห่วงคู่ (สนม)' },
-  { key: 'empress', label: 'ทรงฮองเฮา' },
+  { key: 'twin', label: 'สองมวย (นางกำนัล)', ages: ['child', 'teen'] },
+  { key: 'concubine', label: 'มวยห่วงคู่ (สนม)', ages: ['teen', 'adult'] },
+  { key: 'empress', label: 'ทรงฮองเฮา', ages: ['adult', 'elder'] },
   { key: 'bald', label: 'ศีรษะโล้น (พระ)' },
+  { key: 'tuft', label: 'จุกหัวใจ (เด็กน้อย)', ages: ['child'] },
+  { key: 'bowl', label: 'หัวกะลาหน้าม้า (เด็ก)', ages: ['child'] },
+  { key: 'pigtails', label: 'เปียคู่ผูกโบว์ (เด็ก)', ages: ['child'] },
+  { key: 'lowbun', label: 'เกล้าต่ำ+ผ้าคาดผม', ages: ['adult'] },
+  { key: 'braid', label: 'เปียยาวพาดไหล่', ages: ['teen', 'adult'] },
+  { key: 'halfup', label: 'มัดครึ่งปล่อยครึ่ง', ages: ['adult', 'elder'] },
+  { key: 'elder', label: 'ผมบางผู้เฒ่า', ages: ['elder'] },
+  { key: 'wild', label: 'ผมยุ่งเหยิง (นักเลง/ขอทาน)' },
+  { key: 'princess', label: 'ทรงองค์หญิง', ages: ['child', 'teen'] },
+  { key: 'sidebun', label: 'มวยเอียงข้าง', ages: ['teen', 'adult'] },
 ]
 export const EYE_STYLES: { key: EyeStyle; label: string }[] = [
   { key: 'round', label: 'ตากลม' },
@@ -251,6 +266,17 @@ export const SHAPE_OPTIONS: Record<Exclude<Slot, 'frame' | 'title'>, ShapeOption
     { shape: 'concubine', label: 'ชุดสนม', colors: ['#f9a8d4', '#f472b6', '#fde047'] },
     { shape: 'empress', label: 'ชุดฮองเฮา', colors: ['#dc2626', '#fbbf24', '#fde68a'] },
     { shape: 'imperial', label: 'หลงเผาฮ่องเต้', colors: ['#facc15', '#dc2626', '#fef3c7'] },
+    // ชุดตามอาชีพ (เฟส 3)
+    { shape: 'eunuch', label: 'ชุดขันที', colors: ['#0f766e', '#e2e8f0', '#fbbf24'] },
+    { shape: 'jinyiwei', label: 'ชุดองครักษ์จิ่นอีเว่ย', colors: ['#111827', '#b91c1c', '#fbbf24'] },
+    { shape: 'judge', label: 'ชุดผู้พิพากษา', colors: ['#1e293b', '#f8fafc', '#facc15'] },
+    { shape: 'physician', label: 'ชุดหมอยา', colors: ['#4d7c0f', '#f8fafc', '#f97316'] },
+    { shape: 'merchant', label: 'ชุดพ่อค้า', colors: ['#b45309', '#dc2626', '#fbbf24'] },
+    { shape: 'dancer', label: 'ชุดนางรำ', colors: ['#f472b6', '#fde68a', '#a78bfa'] },
+    { shape: 'assassin', label: 'ชุดนักฆ่า', colors: ['#111827', '#b91c1c', '#7f1d1d'] },
+    { shape: 'beggar', label: 'ชุดขอทานเก้าชั้น', colors: ['#a8a29e', '#3b82f6', '#dc2626'] },
+    { shape: 'farmer', label: 'ชุดชาวนา', colors: ['#a16207', '#e7e5e4', '#78350f'] },
+    { shape: 'swordswoman', label: 'ชุดนักดาบหญิง', colors: ['#0e7490', '#e0f2fe', '#f97316'] },
   ],
   pants: [
     { shape: 'trousers', label: 'กางเกงจีนพันขา', colors: ['#6b7280', '#e8d9b0', '#8b5e34'] },
@@ -265,6 +291,12 @@ export const SHAPE_OPTIONS: Record<Exclude<Slot, 'frame' | 'title'>, ShapeOption
     { shape: 'court', label: 'รองเท้าขุนนาง', colors: ['#1f2937', '#fbbf24', '#ffffff'] },
     { shape: 'flower', label: 'รองเท้าปักดอกไม้', colors: ['#f472b6', '#ffffff', '#fde047'] },
     { shape: 'boot', label: 'บู๊ตแม่ทัพ', colors: ['#78350f', '#fbbf24', '#451a03'] },
+    // รองเท้าทรงใหม่ (เฟส 3)
+    { shape: 'straw', label: 'รองเท้าฟางสาน', colors: ['#92400e', '#d6b76a', '#a16207'] },
+    { shape: 'wooden', label: 'รองเท้าไม้ฟันคู่', colors: ['#78350f', '#dc2626', '#d6b76a'] },
+    { shape: 'platform', label: 'รองเท้าฐานสูงราชสำนัก', colors: ['#be185d', '#f8fafc', '#fbbf24'] },
+    { shape: 'riding', label: 'บู๊ตขี่ม้าขอบขน', colors: ['#78350f', '#f1f5f9', '#fbbf24'] },
+    { shape: 'tiger', label: 'รองเท้าหัวเสือ', colors: ['#f59e0b', '#fff7ed', '#1f2937'] },
   ],
   hat: [
     { shape: 'headband', label: 'ผ้าคาดหัวจอมยุทธ์', colors: ['#dc2626', '#fbbf24', '#fef08a'] },
@@ -276,6 +308,17 @@ export const SHAPE_OPTIONS: Record<Exclude<Slot, 'frame' | 'title'>, ShapeOption
     { shape: 'flowers', label: 'ปิ่นโบตั๋นผีเสื้อ', colors: ['#f472b6', '#fbbf24', '#34d399'] },
     { shape: 'phoenix', label: 'มงกุฎหงส์ฮองเฮา', colors: ['#fbbf24', '#dc2626', '#34d399'] },
     { shape: 'imperial', label: 'มงกุฎฮ่องเต้', colors: ['#1f2937', '#facc15', '#ffffff'] },
+    // หมวกตามอาชีพ (เฟส 4)
+    { shape: 'physician', label: 'หมวกหมอยา', colors: ['#4d7c0f', '#f8fafc', '#f97316'] },
+    { shape: 'merchant', label: 'หมวกพ่อค้า', colors: ['#111827', '#fbbf24', '#dc2626'] },
+    { shape: 'guard', label: 'หมวกองครักษ์', colors: ['#111827', '#fbbf24', '#dc2626'] },
+    { shape: 'princess', label: 'มงกุฎองค์หญิง', colors: ['#fbbf24', '#f472b6', '#ffffff'] },
+    { shape: 'eunuch', label: 'หมวกขันที', colors: ['#111827', '#dc2626', '#fbbf24'] },
+    { shape: 'judge', label: 'หมวกผู้พิพากษา', colors: ['#111827', '#fbbf24', '#34d399'] },
+    { shape: 'beggar', label: 'หมวกฟางขาด', colors: ['#d6b76a', '#3b82f6', '#dc2626'] },
+    { shape: 'farmer', label: 'หมวกฟางชาวนา', colors: ['#d6b76a', '#a16207', '#dc2626'] },
+    { shape: 'dancer', label: 'มงกุฎดอกไม้นางรำ', colors: ['#f472b6', '#a78bfa', '#fde68a'] },
+    { shape: 'bandana', label: 'ผ้าโพกหัวนักฆ่า', colors: ['#111827', '#b91c1c', '#7f1d1d'] },
   ],
   glasses: [
     { shape: 'huadian', label: 'ลายดอกไม้หน้าผาก', colors: ['#dc2626', '#fbbf24', '#ffffff'] },
@@ -310,6 +353,15 @@ export const SHAPE_OPTIONS: Record<Exclude<Slot, 'frame' | 'title'>, ShapeOption
     { shape: 'phoenix', label: 'หงส์ไฟน้อย', colors: ['#fb923c', '#dc2626', '#fbbf24'] },
     { shape: 'qilin', label: 'ฉีหลิน', colors: ['#fbbf24', '#f59e0b', '#1f2937'] },
     { shape: 'dragon', label: 'มังกรทอง', colors: ['#facc15', '#f59e0b', '#dc2626'] },
+    { shape: 'tiger', label: 'เสือ (ปีขาล)', colors: ['#f59e0b', '#fff7ed', '#1f2937'] },
+    { shape: 'horse', label: 'ม้า (ปีมะเมีย)', colors: ['#a16207', '#1f2937', '#3f3f46'] },
+    { shape: 'monkey', label: 'ลิงคาดผมทอง (ปีวอก)', colors: ['#a16207', '#fde68a', '#fbbf24'] },
+    { shape: 'ox', label: 'วัวเขียว (ปีฉลู)', colors: ['#6b8fb5', '#fde68a', '#1f2937'] },
+    { shape: 'rooster', label: 'ไก่ (ปีระกา)', colors: ['#f97316', '#fde047', '#dc2626'] },
+    { shape: 'pig', label: 'หมูถือก้อนทอง (ปีกุน)', colors: ['#fbcfe8', '#f472b6', '#fbbf24'] },
+    { shape: 'koi', label: 'ปลาคราฟ', colors: ['#fb923c', '#ffffff', '#dc2626'] },
+    { shape: 'turtle', label: 'เต่าดำเสวียนอู่', colors: ['#334155', '#94a3b8', '#16a34a'] },
+    { shape: 'fox', label: 'จิ้งจอก', colors: ['#f97316', '#ffffff', '#1f2937'], variant: { tails: '1' } },
   ],
   bg: [
     { shape: 'cloud', label: 'เมฆมงคล', colors: ['#ffffff', '#ffffff', '#ffffff'], extra: { pattern: 'cloud' } },
