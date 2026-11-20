@@ -248,8 +248,8 @@ export function NewWeapon({ shape, d }: { shape: string; d?: ItemDesign }) {
           <path d="M-2 -76 Q-38 -14 -2 48" fill="none" stroke={c1} strokeWidth="3.6" strokeLinecap="round" />
           <path d="M-2 -76 L-2 48" stroke="#e5e7eb" strokeWidth="1" />
           <rect x="-22.6" y="-20" width="5.6" height="16" rx="2.4" fill={c2} transform="rotate(4 -20 -12)" />
-          <path d="M-2 -12 L44 -12" stroke="#a16207" strokeWidth="1.8" strokeLinecap="round" />
-          <path d="M44 -12 L36 -16 L36 -8 Z" fill={STEEL} stroke={STEEL_D} strokeWidth=".8" />
+          <path d="M-2 -12 L28 -12" stroke="#a16207" strokeWidth="1.8" strokeLinecap="round" />
+          <path d="M28 -12 L21 -16 L21 -8 Z" fill={STEEL} stroke={STEEL_D} strokeWidth=".8" />
           <path d="M-2 -12 l6 -4 M-2 -12 l6 4 M2 -12 l6 -4 M2 -12 l6 4" stroke={c3} strokeWidth="1.6" strokeLinecap="round" />
           <circle cx="-2" cy="-77" r="2.4" fill={c2} />
           <circle cx="-2" cy="49" r="2.4" fill={c2} />

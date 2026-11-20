@@ -26,12 +26,15 @@ import {
   SLOT_META,
   clearColorOverride,
   effectiveDesign,
+  SHAPE_OPTIONS,
   rarityOf,
   readAvatarConfig,
   resolveBase,
   setColorOverride,
   titleOf,
 } from '@/lib/avatar'
+import { detectSet, slotLabel } from '@/lib/avatarSets'
+import { poseForWeapon } from '@/components/avatar/weaponPoses'
 import {
   DEFAULT_FREE_POSE,
   PART_META,
@@ -106,6 +109,8 @@ export default function ProfileStudioPage() {
 
   const base = useMemo(() => resolveBase(draft), [draft])
   const fpDraft = useMemo(() => resolveFreePose(draft), [draft])
+  // ชุดเซ็ตที่ใส่ใกล้ครบที่สุด (ครบ 2/3/5 ชิ้น = ออร่าระดับ 1/2/3)
+  const setInfo = useMemo(() => detectSet(draft), [draft])
 
   // เด็กขยับเอง (ลากบนเวที หรือเลื่อนแถบ) → เก็บทั้ง pose และ freePose คู่กันเสมอ
   const setFree = (fp: FreePoseConfig, pose = 'custom') =>
@@ -373,6 +378,33 @@ export default function ProfileStudioPage() {
             <CharacterStage config={draft} className="w-56 sm:w-64" animate={true} onPoseChange={(fp) => setFree(fp)} />
             <p className="text-[11px] font-bold text-purple-600 text-center">👆 ลากแขน ขา อาวุธ หรือตัวละครได้เลย!</p>
 
+            {/* ชุดเซ็ต: ใส่ธีมเดียวกันครบ 2/3/5 ชิ้น ปลดออร่า */}
+            {setInfo ? (
+              <div
+                className={`w-full p-3 rounded-2xl border text-center space-y-1.5 ${
+                  setInfo.tier === 3 ? 'border-amber-300 bg-gradient-to-r from-amber-50 to-yellow-50' : 'border-indigo-100 bg-indigo-50/50'
+                }`}
+              >
+                <p className="text-xs font-black text-gray-800">
+                  {setInfo.def.icon} ชุด{setInfo.def.name} {setInfo.count}/{setInfo.total} ชิ้น
+                </p>
+                <div className="flex justify-center gap-1">
+                  {Array.from({ length: setInfo.total }).map((_, i) => (
+                    <span key={i} className={`w-5 h-1.5 rounded-full ${i < setInfo.count ? 'bg-amber-400' : 'bg-gray-200'}`} />
+                  ))}
+                </div>
+                <p className="text-[11px] font-bold text-gray-500">
+                  {setInfo.tier === 3
+                    ? '✨ ออร่าระดับสูงสุด! ครบทั้งชุดแล้ว'
+                    : `ออร่าระดับ ${setInfo.tier} · ขาดอีก ${setInfo.total - setInfo.count} ชิ้น: ${setInfo.missing.map(slotLabel).join(', ')}`}
+                </p>
+              </div>
+            ) : (
+              <p className="text-[11px] font-bold text-gray-400 text-center">
+                🎖️ ใส่ชุด/หมวก/ของถือธีมเดียวกันตั้งแต่ 2 ชิ้น ปลดออร่าพิเศษ!
+              </p>
+            )}
+
             <div className="w-full grid grid-cols-2 gap-2">
               <button
                 type="button"
@@ -530,6 +562,21 @@ export default function ProfileStudioPage() {
                       )
                     })}
                   </div>
+                  {(() => {
+                    const wShape = draft.equip?.hand?.d?.shape
+                    const wp = poseForWeapon(wShape)
+                    if (!wp) return null
+                    const wName = SHAPE_OPTIONS.hand.find((o) => o.shape === wShape)?.label || 'อาวุธ'
+                    return (
+                      <button
+                        type="button"
+                        onClick={() => setFree(wp)}
+                        className="mt-2 w-full px-3 py-2.5 rounded-2xl border border-amber-300 bg-gradient-to-r from-amber-50 to-orange-50 hover:from-amber-100 hover:to-orange-100 text-xs font-extrabold text-amber-800 transition cursor-pointer"
+                      >
+                        🎯 ท่าประจำ{wName}
+                      </button>
+                    )
+                  })()}
                 </div>
 
                 <div>

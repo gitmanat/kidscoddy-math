@@ -20,6 +20,8 @@ import { ExtraSleeve, NEW_OUTFITS, OUTFIT_ZONE, PatternOverlay } from '@/compone
 import { NewShoe, isNewShoe } from '@/components/avatar/shoes'
 import { NEW_HAIR_KEYS, NewHairBack, NewHairFront } from '@/components/avatar/hair'
 import { NewHat, isNewHat } from '@/components/avatar/hats'
+import { SetAuraLayer } from '@/components/avatar/aura'
+import { detectSet } from '@/lib/avatarSets'
 
 // =====================================================================
 // 🏯 ตัวละครหนังจีนโบราณ — ฮ่องเต้ / ฮองเฮา / สนม / จอมยุทธ์ / ขุนนาง / แม่ทัพ / พระ / นักพรต
@@ -1818,6 +1820,7 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
 
   // design ของแต่ละช่อง หลังซ้อนสีที่เด็กเลือกเอง
   const D = (s: Slot) => effectiveDesign(config, s)
+  const setInfo = detectSet(config)
 
   const top = D('outfit') || DEFAULT_TOP
   const bottom = D('pants') || DEFAULT_BOTTOM
@@ -1926,6 +1929,8 @@ export function CharacterSvg({ config, view = 'full', animate = false, className
         `}</style>
       )}
       <BgPattern pattern={eq.bg?.d?.pattern as string | undefined} />
+      {/* ออร่าชุดเซ็ต (ใส่ธีมเดียวกันครบ 2/3/5 ชิ้น) วาดด้านหลังทุกอย่าง */}
+      {setInfo && setInfo.tier > 0 && <SetAuraLayer theme={setInfo.def.theme} tier={setInfo.tier} uid={uid} animate={animate} />}
       {view === 'full' && <ellipse cx="100" cy="298" rx="52" ry="8" fill="#000" opacity=".16" />}
 
       <g style={animate ? { animation: `${uid}-bob 3.2s ease-in-out infinite` } : undefined}>
