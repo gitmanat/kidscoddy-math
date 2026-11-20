@@ -4,19 +4,55 @@ import type React from 'react'
 import { CompletedAvatarsBadge } from '@/components/AvatarDisplay'
 import { CharacterSvg } from '@/components/Character'
 import { readAvatarConfig } from '@/lib/avatar'
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useRef, useState, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { CoinIcon } from '@/components/CoinIcon'
 import AssignDateField from '@/components/AssignDateField'
 
-// ฟังก์ชันช่วยแปลงเลเวลเป็นฉายาเท่ๆ
+// =====================================================================
+// 🏯 ฉายาตามเลเวล 1-100 แนวนิยายกำลังภายในจีน (ฝึกบำเพ็ญสู่เซียน)
+//   เลเวล 1-90  = 9 ภพ ภพละ 10 เลเวล (ชั้น 1-9 และขั้นสมบูรณ์)
+//   เลเวล 91-100 = ภพเซียน แต่ละเลเวลมีฉายาเฉพาะ
+// =====================================================================
+const LEVEL_REALMS = [
+  { emoji: '🌱', name: 'กลั่นลมปราณ' },
+  { emoji: '🪨', name: 'สร้างรากฐาน' },
+  { emoji: '🟡', name: 'ผนึกจินตัน' },
+  { emoji: '🔮', name: 'กำเนิดวิญญาณ' },
+  { emoji: '🌀', name: 'แปรเปลี่ยนเทพ' },
+  { emoji: '🌌', name: 'ทะลวงห้วงว่างเปล่า' },
+  { emoji: '🛡️', name: 'หลอมรวมกายา' },
+  { emoji: '🌠', name: 'มหายาน' },
+  { emoji: '⚡', name: 'ฝ่าทัณฑ์สวรรค์' },
+]
+
+const IMMORTAL_TITLES = [
+  '🌤️ เซียนผู้เริ่มบรรลุ',
+  '⛰️ เซียนปฐพี',
+  '☁️ เซียนเมฆา',
+  '🌙 เซียนจันทรา',
+  '☀️ เซียนสุริยะ',
+  '⭐ เซียนดารา',
+  '🔱 เซียนทอง',
+  '🐉 เซียนมังกรฟ้า',
+  '🌌 มหาเซียนไท่อี่',
+  '👑 จักรพรรดิเซียนผู้อมตะ',
+]
+
 const getLevelTitle = (level: number) => {
-  if (level >= 10) return '🧙‍♂️ จอมเวทคณิตศาสตร์ขั้นสูง'
-  if (level >= 5) return '⚡ อัศวินสมการผู้พิชิต'
-  if (level >= 3) return '🚀 นักผจญภัยตัวเลข'
-  return '🌱 นักคำนวณฝึกหัด'
+  const lv = Math.min(100, Math.max(1, Math.floor(level || 1)))
+  if (lv > 90) return IMMORTAL_TITLES[lv - 91]
+  const realm = LEVEL_REALMS[Math.floor((lv - 1) / 10)]
+  const stage = ((lv - 1) % 10) + 1
+  return `${realm.emoji} ${realm.name} ${stage === 10 ? 'ขั้นสมบูรณ์' : `ชั้น ${stage}`}`
 }
+
+const XP_PER_LEVEL = 50 // ต้องตรงกับสูตรเลเวล floor(xp/50)+1 ที่ใช้ในหน้าทำแบบฝึกและ SQL
+const MAX_TITLE_LEVEL = 100
+
+const getRealmOf = (level: number) =>
+  level > 90 ? { emoji: '👑', name: 'ภพเซียน' } : LEVEL_REALMS[Math.floor((level - 1) / 10)]
 
 // =====================================================================
 // 📅 ฟังก์ชันช่วยจัดการ "วัน" ของแบบฝึกหัด (ใช้เวลาท้องถิ่นของเครื่อง ไม่ใช่ UTC)
@@ -372,6 +408,15 @@ export default function StudentDashboard() {
   const [setCoinsInput, setSetCoinsInput] = useState('')
   const [setXpInput, setSetXpInput] = useState('')
   const [showHistory, setShowHistory] = useState(false)
+  const [showLevels, setShowLevels] = useState(false)
+  const currentLevelRowRef = useRef<HTMLDivElement | null>(null)
+
+  // เปิดตารางเลเวลแล้วเลื่อนไปที่เลเวลปัจจุบันของเด็กให้เอง
+  useEffect(() => {
+    if (!showLevels) return
+    const timer = setTimeout(() => currentLevelRowRef.current?.scrollIntoView({ block: 'center' }), 60)
+    return () => clearTimeout(timer)
+  }, [showLevels])
   const [historyList, setHistoryList] = useState<any[]>([])
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [savingStreakSettings, setSavingStreakSettings] = useState(false)
@@ -935,12 +980,22 @@ export default function StudentDashboard() {
 
               <div className="space-y-1.5 text-center sm:text-left">
                 <div className="flex flex-wrap items-center justify-center sm:justify-start gap-2">
-                  <span className="px-3 py-0.5 bg-white/20 backdrop-blur-md rounded-full text-xs font-extrabold">
-                    ⭐ Level {currentLevel}
-                  </span>
-                  <span className="text-xs font-bold text-purple-200">
+                  <button
+                    type="button"
+                    onClick={() => setShowLevels(true)}
+                    title="ดูเส้นทางเลเวลทั้งหมด"
+                    className="px-3 py-0.5 bg-white/20 hover:bg-white/35 backdrop-blur-md rounded-full text-xs font-extrabold cursor-pointer transition"
+                  >
+                    ⭐ Level {currentLevel} ▸
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setShowLevels(true)}
+                    title="ดูเส้นทางเลเวลทั้งหมด"
+                    className="text-xs font-bold text-purple-200 hover:text-white cursor-pointer transition"
+                  >
                     {studentConfig.equip?.title?.name || student?.equipped_title || getLevelTitle(currentLevel)}
-                  </span>
+                  </button>
                 </div>
                 <h2 className="text-xl md:text-2xl font-black">
                   สู้ๆ นะครับ, {student?.display_name}! 🚀
@@ -1025,6 +1080,13 @@ export default function StudentDashboard() {
                 style={{ width: `${Math.min(xpPercentage, 100)}%` }}
               />
             </div>
+            <button
+              type="button"
+              onClick={() => setShowLevels(true)}
+              className="mt-2 text-[11px] font-extrabold text-amber-200 hover:text-white underline-offset-2 hover:underline cursor-pointer"
+            >
+              🗺️ ดูเส้นทางเลเวล: แต่ละเลเวลได้ฉายาอะไร ต้องสะสม XP เท่าไหร่
+            </button>
           </div>
         </div>
 
@@ -1507,6 +1569,81 @@ export default function StudentDashboard() {
                 </button>
               </>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* 🗺️ เส้นทางเลเวล 1-100 */}
+      {showLevels && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setShowLevels(false)}>
+          <div
+            onClick={(e) => e.stopPropagation()}
+            className="bg-white rounded-3xl p-5 max-w-lg w-full shadow-2xl border border-purple-200 max-h-[88vh] flex flex-col gap-3"
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="text-base font-black text-gray-800">🗺️ เส้นทางบำเพ็ญ 100 เลเวล</h3>
+              <button
+                type="button"
+                onClick={() => setShowLevels(false)}
+                className="w-8 h-8 rounded-full bg-gray-100 hover:bg-gray-200 text-gray-500 font-black cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="rounded-2xl bg-purple-50 border border-purple-200 px-4 py-3 text-xs font-bold text-purple-800">
+              ตอนนี้คุณอยู่ Level {currentLevel} • สะสมแล้ว {currentXP} XP
+              {currentLevel < MAX_TITLE_LEVEL
+                ? ` • อีก ${currentLevel * XP_PER_LEVEL - currentXP} XP จะเลื่อนเป็น Level ${currentLevel + 1}`
+                : ' • ถึงจุดสูงสุดแล้ว 👑'}
+            </div>
+
+            <div className="overflow-y-auto pr-1 space-y-1.5">
+              {Array.from({ length: MAX_TITLE_LEVEL }, (_, i) => i + 1).map((lv) => {
+                const needXp = (lv - 1) * XP_PER_LEVEL
+                const isCurrent = lv === currentLevel
+                const isPassed = lv < currentLevel
+                const realm = getRealmOf(lv)
+                const showRealmHeader = lv === 1 || lv % 10 === 1
+                const breakthrough = lv % 10 === 0 && lv < MAX_TITLE_LEVEL
+                const nextRealm = breakthrough ? getRealmOf(lv + 1) : null
+                return (
+                  <div key={lv}>
+                    {showRealmHeader && (
+                      <p className="sticky top-0 z-10 bg-white/95 backdrop-blur py-1.5 text-xs font-black text-indigo-600">
+                        {realm.emoji} ภพ{realm.name} (Level {lv}–{Math.min(lv + 9, MAX_TITLE_LEVEL)})
+                      </p>
+                    )}
+                    <div
+                      ref={isCurrent ? currentLevelRowRef : undefined}
+                      className={`flex items-center justify-between gap-3 rounded-2xl border px-3.5 py-2 ${
+                        isCurrent
+                          ? 'border-amber-400 bg-amber-50 ring-2 ring-amber-300'
+                          : isPassed
+                            ? 'border-emerald-200 bg-emerald-50/60'
+                            : 'border-gray-100 bg-gray-50'
+                      }`}
+                    >
+                      <div className="min-w-0">
+                        <p className={`text-sm font-black truncate ${isPassed || isCurrent ? 'text-gray-800' : 'text-gray-500'}`}>
+                          Lv.{lv} {getLevelTitle(lv)}
+                        </p>
+                        {nextRealm && (
+                          <p className="text-[11px] font-bold text-purple-600">🎉 ผ่านขั้นนี้แล้วทะลวงสู่ภพ{nextRealm.name}!</p>
+                        )}
+                        {lv === MAX_TITLE_LEVEL && <p className="text-[11px] font-bold text-amber-600">🏆 จุดสูงสุดของเส้นทางเซียน</p>}
+                      </div>
+                      <div className="text-right shrink-0">
+                        <p className="text-[11px] font-black text-purple-700">ต้องสะสม {needXp.toLocaleString()} XP</p>
+                        <p className="text-[11px] font-bold text-gray-500">
+                          {isCurrent ? '◀ คุณอยู่ที่นี่' : isPassed ? '✅ ผ่านแล้ว' : `อีก ${(needXp - currentXP).toLocaleString()} XP`}
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
           </div>
         </div>
       )}
