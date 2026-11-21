@@ -17,8 +17,8 @@ import AssignDateField from '@/components/AssignDateField'
 // =====================================================================
 const LEVEL_REALMS = [
   { emoji: '🌱', name: 'กลั่นลมปราณ' },
-  { emoji: '⚔️', name: 'สร้างรากฐาน' },
-  { emoji: '🧿', name: 'ผนึกจินตัน' },
+  { emoji: '🪨', name: 'สร้างรากฐาน' },
+  { emoji: '🟡', name: 'ผนึกจินตัน' },
   { emoji: '🔮', name: 'กำเนิดวิญญาณ' },
   { emoji: '🌀', name: 'แปรเปลี่ยนเทพ' },
   { emoji: '🌌', name: 'ทะลวงห้วงว่างเปล่า' },
@@ -52,6 +52,45 @@ const getLevelTitle = (level: number) => {
 // (คอลัมน์ equipped_title รุ่นเก่าใช้เฉพาะคนที่ยังไม่เคยมี avatar_config)
 const resolveDisplayTitle = (u: any, cfg: any, level: number) =>
   cfg?.equip?.title?.name || (!u?.avatar_config ? u?.equipped_title : '') || getLevelTitle(level)
+
+// =====================================================================
+// 🟢 สถานะออนไลน์ / ใช้งานล่าสุด
+//   - ออนไลน์ = มี heartbeat ภายใน 3 นาที
+//   - ครู/แอดมินเห็นวัน-เวลาจริง ส่วนนักเรียนเห็นแบบกว้างๆ (กี่ชั่วโมง/เมื่อวาน/กี่วันที่แล้ว)
+//     เพื่อไม่ให้เด็กเห็นเวลาเข้าใช้งานที่แน่นอนของเพื่อน
+// =====================================================================
+const ONLINE_WINDOW_MS = 3 * 60 * 1000
+
+const isOnlineNow = (lastSeen: string | null | undefined, now: number) => {
+  if (!lastSeen || !now) return false
+  const t = new Date(lastSeen).getTime()
+  return Number.isFinite(t) && now - t < ONLINE_WINDOW_MS
+}
+
+const getPresence = (lastSeen: string | null | undefined, now: number, detailed: boolean) => {
+  if (!now) return { online: false, label: 'กำลังตรวจสอบสถานะ...' }
+  if (!lastSeen) return { online: false, label: 'ยังไม่เคยเข้าใช้งาน' }
+  const t = new Date(lastSeen).getTime()
+  if (!Number.isFinite(t)) return { online: false, label: 'ไม่ทราบสถานะ' }
+
+  const diff = Math.max(0, now - t)
+  if (diff < ONLINE_WINDOW_MS) return { online: true, label: 'ออนไลน์อยู่' }
+
+  const minutes = Math.floor(diff / 60000)
+  if (minutes < 60) return { online: false, label: `ใช้งานล่าสุด ${minutes} นาทีที่แล้ว` }
+
+  const d = new Date(t)
+  const startOfDay = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime()
+  const dayDiff = Math.round((startOfDay(new Date(now)) - startOfDay(d)) / 86400000)
+  const time = d.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' }) + ' น.'
+  const dateStr = d.toLocaleDateString('th-TH', { day: 'numeric', month: 'short' })
+
+  if (dayDiff <= 0)
+    return { online: false, label: detailed ? `ใช้งานล่าสุด วันนี้ ${time}` : `ใช้งานล่าสุด ${Math.floor(minutes / 60)} ชั่วโมงที่แล้ว` }
+  if (dayDiff === 1) return { online: false, label: detailed ? `ใช้งานล่าสุด เมื่อวาน ${time}` : 'ใช้งานล่าสุด เมื่อวาน' }
+  if (dayDiff < 7) return { online: false, label: detailed ? `ใช้งานล่าสุด ${dateStr} ${time}` : `ใช้งานล่าสุด ${dayDiff} วันที่แล้ว` }
+  return { online: false, label: detailed ? `ใช้งานล่าสุด ${dateStr} ${time}` : 'ไม่ได้เข้าใช้งานมานาน' }
+}
 
 const XP_PER_LEVEL = 50 // ต้องตรงกับสูตรเลเวล floor(xp/50)+1 ที่ใช้ในหน้าทำแบบฝึกและ SQL
 const MAX_TITLE_LEVEL = 100
@@ -343,11 +382,13 @@ function HoverZoomAvatar({
   zoom,
   name,
   subtitle,
+  online,
 }: {
   children: React.ReactNode
   zoom: React.ReactNode
   name?: string
   subtitle?: string
+  online?: boolean
 }) {
   const [open, setOpen] = useState(false)
   return (
@@ -358,6 +399,12 @@ function HoverZoomAvatar({
       onClick={() => setOpen((v) => !v)}
     >
       {children}
+      {online !== undefined && (
+        <span
+          title={online ? 'ออนไลน์อยู่' : 'ออฟไลน์'}
+          className={`absolute -top-1 -right-1 z-30 w-4 h-4 rounded-full border-2 border-white ${online ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`}
+        />
+      )}
       {open && (
         <div className="absolute left-full top-1/2 -translate-y-1/2 ml-4 z-50 pointer-events-none flex flex-col items-center gap-2 bg-white rounded-3xl p-3 shadow-2xl border-2 border-indigo-200">
           {zoom}
@@ -414,7 +461,36 @@ export default function StudentDashboard() {
   const [setXpInput, setSetXpInput] = useState('')
   const [showHistory, setShowHistory] = useState(false)
   const [showLevels, setShowLevels] = useState(false)
+  // 0 = ยังไม่ได้อ่านเวลา (อ่านใน useEffect เพื่อไม่ให้ Date.now() ถูกคำนวณตอน prerender)
+  const [nowTick, setNowTick] = useState(0)
   const currentLevelRowRef = useRef<HTMLDivElement | null>(null)
+
+  // 🟢 heartbeat: บอกระบบว่าเด็กกำลังออนไลน์ + รีเฟรชสถานะเพื่อนทุก 60 วินาที
+  useEffect(() => {
+    const uid = student?.id
+    if (!uid) return
+    const ping = () => {
+      if (document.visibilityState !== 'visible') return
+      supabase.rpc('touch_last_seen', { p_user_id: uid }).then(
+        () => {},
+        () => {}
+      )
+    }
+    setNowTick(Date.now())
+    ping()
+    const beat = setInterval(ping, 60_000)
+    const refresh = setInterval(() => {
+      setNowTick(Date.now())
+      refreshPresence()
+    }, 60_000)
+    document.addEventListener('visibilitychange', ping)
+    return () => {
+      clearInterval(beat)
+      clearInterval(refresh)
+      document.removeEventListener('visibilitychange', ping)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [student?.id])
 
   // เปิดตารางเลเวลแล้วเลื่อนไปที่เลเวลปัจจุบันของเด็กให้เอง
   useEffect(() => {
@@ -537,6 +613,7 @@ export default function StudentDashboard() {
       if (allStudents) {
         const rankedList = allStudents.sort((a, b) => (b.xp || 0) - (a.xp || 0))
         setLeaderboard(rankedList)
+        refreshPresence()
       }
 
       if (latestUser?.role === 'admin') {
@@ -569,6 +646,18 @@ export default function StudentDashboard() {
   //  - ไม่ JOIN ตาราง users (ถ้า RLS/คอลัมน์ผิด ทั้ง query จะพังหรือแถวหาย)
   //  - 1 คน/1 ชุด แสดงครั้งเดียว (ใช้คะแนนที่ดีที่สุด แต่ลำดับตามเวลาที่ทำครั้งแรก)
   // =====================================================================
+  const refreshPresence = async () => {
+    try {
+      const { data, error } = await supabase.from('users').select('id, last_seen_at').eq('role', 'student')
+      if (error || !data) return
+      const map = new Map<string, string | null>(data.map((r: any) => [r.id, r.last_seen_at]))
+      setNowTick(Date.now())
+      setLeaderboard((prev) => prev.map((u) => (map.has(u.id) ? { ...u, last_seen_at: map.get(u.id) } : u)))
+    } catch (err) {
+      console.error('Presence error:', err)
+    }
+  }
+
   const refreshStreak = async (userId: string) => {
     try {
       const { data, error } = await supabase.rpc('get_streak_status', { p_user_id: userId })
@@ -1411,9 +1500,14 @@ export default function StudentDashboard() {
               <h3 className="text-xl font-black text-gray-800">🏆 กระดานผู้นำ XP และเลเวล</h3>
               <p className="text-xs text-gray-500">จัดอันดับตามคะแนนประสบการณ์ (XP) สะสมของนักผจญภัยทุกคน</p>
             </div>
-            <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-800 rounded-full">
-              ✨ แรงก์ห้องเรียน
-            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <span className="text-xs font-bold px-3 py-1 bg-emerald-100 text-emerald-700 rounded-full">
+                🟢 ออนไลน์ {leaderboard.filter((u) => u.id === student?.id || isOnlineNow(u.last_seen_at, nowTick)).length} คน
+              </span>
+              <span className="text-xs font-bold px-3 py-1 bg-amber-100 text-amber-800 rounded-full">
+                ✨ แรงก์ห้องเรียน
+              </span>
+            </div>
           </div>
 
           {leaderboard.length === 0 ? (
@@ -1430,6 +1524,8 @@ export default function StudentDashboard() {
 
                 const friendConfig = readAvatarConfig(item)
                 const friendTitle = resolveDisplayTitle(item, friendConfig, item.level || 1)
+                const canSeeExact = !!student?.role && student.role !== 'student'
+                const presence = isMe ? { online: true, label: 'ออนไลน์อยู่' } : getPresence(item.last_seen_at, nowTick, canSeeExact)
 
                 return (
                   <div
@@ -1447,6 +1543,7 @@ export default function StudentDashboard() {
                       <HoverZoomAvatar
                         name={item.display_name}
                         subtitle={friendTitle}
+                        online={presence.online}
                         zoom={
                           <FramedAvatarBox
                             config={friendConfig}
@@ -1485,6 +1582,10 @@ export default function StudentDashboard() {
                         </h4>
                         <p className="text-xs text-purple-600 font-bold">
                           {friendTitle} • <span className="text-gray-400">{item.group_name || 'ทั่วไป'}</span>
+                        </p>
+                        <p className={`text-[11px] font-bold flex items-center gap-1 ${presence.online ? 'text-emerald-600' : 'text-gray-400'}`}>
+                          <span className={`inline-block w-2 h-2 rounded-full ${presence.online ? 'bg-emerald-500 animate-pulse' : 'bg-gray-300'}`} />
+                          {presence.label}
                         </p>
                       </div>
                     </div>

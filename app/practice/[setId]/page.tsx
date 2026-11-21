@@ -64,6 +64,26 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
       })
   }, [setId, router])
 
+  // 🟢 heartbeat: ระหว่างทำแบบฝึกก็ยังนับว่าออนไลน์อยู่
+  useEffect(() => {
+    const uid = student?.id
+    if (!uid) return
+    const ping = () => {
+      if (document.visibilityState !== 'visible') return
+      supabase.rpc('touch_last_seen', { p_user_id: uid }).then(
+        () => {},
+        () => {}
+      )
+    }
+    ping()
+    const beat = setInterval(ping, 60_000)
+    document.addEventListener('visibilitychange', ping)
+    return () => {
+      clearInterval(beat)
+      document.removeEventListener('visibilitychange', ping)
+    }
+  }, [student?.id])
+
   useEffect(() => {
     // อุปกรณ์สัมผัส (แท็บเล็ต/มือถือ) → ใช้แป้นพิมพ์คณิตในแอปเป็นค่าเริ่มต้น ไม่เด้งคีย์บอร์ดเครื่อง
     if (typeof window !== 'undefined' && window.matchMedia?.('(pointer: coarse)').matches) {
