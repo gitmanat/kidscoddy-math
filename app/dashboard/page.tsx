@@ -136,6 +136,13 @@ type ResolvedAvatarBg = {
   hasBg: boolean
 }
 
+// รับเฉพาะค่าที่หน้าตาเป็น URL รูปจริง (กันค่าเพี้ยน เช่น ชื่อไฟล์ลอยๆ ข้อความ หรือ css ที่ถูกใส่ผิดช่อง)
+const asImageUrl = (v: unknown): string | null => {
+  if (typeof v !== 'string') return null
+  const t = v.trim()
+  return /^(https?:\/\/|\/|data:image\/|blob:)/i.test(t) ? t : null
+}
+
 function resolveAvatarBackground(
   config: AvatarCfg | null | undefined,
   fallbackBgKey?: string | null,
@@ -153,16 +160,20 @@ function resolveAvatarBackground(
   const isPortraitMode = cfg.mode === 'portrait' && !!cfg.portrait
 
   const imageUrl: string | null =
-    bgEquip?.image_url ||
-    bgDesign.image_url ||
-    bgDesign.imageUrl ||
-    bgDesign.url ||
-    bgDesign.image ||
-    bgDesign.bg_url ||
-    bgDesign.bgUrl ||
-    shopItemByKey?.image_url ||
-    fallbackItem?.image_url ||
-    (isPortraitMode ? cfg.portrait : null)
+    [
+      bgEquip?.image_url,
+      bgDesign.image_url,
+      bgDesign.imageUrl,
+      bgDesign.url,
+      bgDesign.image,
+      bgDesign.bg_url,
+      bgDesign.bgUrl,
+      shopItemByKey?.image_url,
+      fallbackItem?.image_url,
+      isPortraitMode ? cfg.portrait : null,
+    ]
+      .map(asImageUrl)
+      .find(Boolean) || null
 
   const colors: string[] | undefined = Array.isArray(bgDesign.colors) ? bgDesign.colors : undefined
   const cssRaw = typeof bgDesign.css === 'string' && bgDesign.css.trim() ? bgDesign.css.trim() : null
@@ -223,20 +234,30 @@ function resolveAvatarBackground(
 }
 
 function AvatarBgLayer({ bg }: { bg: ResolvedAvatarBg }) {
+  // ถ้ารูปพื้นหลังโหลดไม่ขึ้น (ลิงก์เสีย/ไฟล์หาย) ให้ซ่อนรูป แล้วถอยไปใช้สี/ลวดลายแทน ไม่โชว์ไอคอนรูปแตก
+  const [failedUrl, setFailedUrl] = useState<string | null>(null)
   if (!bg.hasBg) return null
+
+  const showImage = !!bg.imageUrl && bg.imageUrl !== failedUrl
+  const imageFailed = !!bg.imageUrl && bg.imageUrl === failedUrl
 
   return (
     <>
-      {bg.imageUrl && (
+      {showImage && (
         // eslint-disable-next-line @next/next/no-img-element
         <img
-          src={bg.imageUrl}
-          //alt="avatar background"
+          src={bg.imageUrl as string}
+          alt=""
+          onError={() => setFailedUrl(bg.imageUrl)}
           className="absolute inset-0 w-full h-full object-cover pointer-events-none select-none z-0"
         />
       )}
 
-      {!bg.imageUrl && bg.patternType === 'chalkboard' && (
+      {imageFailed && bg.cssBackground && (
+        <div className="absolute inset-0 pointer-events-none z-0" style={{ background: bg.cssBackground }} />
+      )}
+
+      {!showImage && bg.patternType === 'chalkboard' && (
         <div
           className="absolute inset-0 pointer-events-none z-0"
           style={{
@@ -248,7 +269,7 @@ function AvatarBgLayer({ bg }: { bg: ResolvedAvatarBg }) {
         />
       )}
 
-      {!bg.imageUrl && bg.patternType === 'stars' && (
+      {!showImage && bg.patternType === 'stars' && (
         <div
           className="absolute inset-0 pointer-events-none z-0"
           style={{
@@ -261,7 +282,7 @@ function AvatarBgLayer({ bg }: { bg: ResolvedAvatarBg }) {
         />
       )}
 
-      {!bg.imageUrl && bg.patternType === 'grid' && (
+      {!showImage && bg.patternType === 'grid' && (
         <div
           className="absolute inset-0 pointer-events-none z-0 opacity-45"
           style={{
@@ -272,7 +293,7 @@ function AvatarBgLayer({ bg }: { bg: ResolvedAvatarBg }) {
         />
       )}
 
-      {!bg.imageUrl && bg.patternType === 'aurora' && (
+      {!showImage && bg.patternType === 'aurora' && (
         <div
           className="absolute inset-0 pointer-events-none z-0 opacity-65"
           style={{
@@ -461,6 +482,7 @@ export default function StudentDashboard() {
   const [setXpInput, setSetXpInput] = useState('')
   const [showHistory, setShowHistory] = useState(false)
   const [showLevels, setShowLevels] = useState(false)
+  const [xpBreakdown, setXpBreakdown] = useState<Record<string, any>>({})
   // 0 = ยังไม่ได้อ่านเวลา (อ่านใน useEffect เพื่อไม่ให้ Date.now() ถูกคำนวณตอน prerender)
   const [nowTick, setNowTick] = useState(0)
   const currentLevelRowRef = useRef<HTMLDivElement | null>(null)
@@ -614,6 +636,7 @@ export default function StudentDashboard() {
         const rankedList = allStudents.sort((a, b) => (b.xp || 0) - (a.xp || 0))
         setLeaderboard(rankedList)
         refreshPresence()
+        if (latestUser?.role === 'admin') refreshXpBreakdown(userId)
       }
 
       if (latestUser?.role === 'admin') {
@@ -646,6 +669,22 @@ export default function StudentDashboard() {
   //  - ไม่ JOIN ตาราง users (ถ้า RLS/คอลัมน์ผิด ทั้ง query จะพังหรือแถวหาย)
   //  - 1 คน/1 ชุด แสดงครั้งเดียว (ใช้คะแนนที่ดีที่สุด แต่ลำดับตามเวลาที่ทำครั้งแรก)
   // =====================================================================
+  // 📊 แยกที่มาของ XP (ทำข้อสอบจริง / ภารกิจ / กล่องของขวัญ) — ถ้ายังไม่ได้รัน SQL จะข้ามไปเฉยๆ
+  // เฉพาะแอดมิน (เซิร์ฟเวอร์ตรวจ role ซ้ำอีกชั้น)
+  const refreshXpBreakdown = async (adminId: string) => {
+    try {
+      const { data, error } = await supabase.rpc('get_xp_breakdown', { p_admin_id: adminId })
+      if (error || !Array.isArray(data)) return
+      const map: Record<string, any> = {}
+      data.forEach((r: any) => {
+        map[r.user_id] = r
+      })
+      setXpBreakdown(map)
+    } catch (err) {
+      console.error('XP breakdown error:', err)
+    }
+  }
+
   const refreshPresence = async () => {
     try {
       const { data, error } = await supabase.from('users').select('id, last_seen_at').eq('role', 'student')
@@ -1527,6 +1566,26 @@ export default function StudentDashboard() {
                 const canSeeExact = !!student?.role && student.role !== 'student'
                 const presence = isMe ? { online: true, label: 'ออนไลน์อยู่' } : getPresence(item.last_seen_at, nowTick, canSeeExact)
 
+                // แยกที่มาของ XP: ข้อสอบจริงนับก่อน แล้วค่อยหักภารกิจ/กล่องของขวัญ ที่เหลือคือ "อื่นๆ"
+                const totalXp = item.xp || 0
+                const isAdminViewer = student?.role === 'admin'
+                const bd = isAdminViewer ? xpBreakdown[item.id] : undefined
+                let problemXp = 0
+                let questXp = 0
+                let giftXp = 0
+                let otherXp = 0
+                if (bd) {
+                  problemXp = Math.min(bd.solved || 0, totalXp)
+                  let rest = totalXp - problemXp
+                  questXp = Math.min(bd.quest_xp || 0, rest)
+                  rest -= questXp
+                  giftXp = Math.min(bd.gift_xp || 0, rest)
+                  otherXp = rest - giftXp
+                }
+                const nonProblemXp = totalXp - problemXp
+                const problemPct = totalXp > 0 ? Math.round((problemXp / totalXp) * 100) : 0
+                const popupAbove = leaderboard.length > 3 && index >= leaderboard.length - 2
+
                 return (
                   <div
                     key={item.id || index}
@@ -1596,9 +1655,53 @@ export default function StudentDashboard() {
                         <span>{item.streak_days || 0} วัน</span>
                       </div>
 
-                      <div className="flex items-center gap-1.5 bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100">
+                      <div
+                        tabIndex={isAdminViewer ? 0 : undefined}
+                        className={`group relative flex items-center gap-1.5 bg-white px-4 py-2 rounded-xl shadow-sm border border-gray-100 outline-none ${
+                          isAdminViewer ? 'cursor-help' : ''
+                        }`}
+                      >
                         <span className="text-base">✨</span>
-                        <span className="text-sm font-black text-indigo-600">{item.xp || 0} XP</span>
+                        <span className="text-sm font-black text-indigo-600">{totalXp} XP</span>
+
+                        {/* 📊 เฉพาะแอดมิน: เอาเมาส์ชี้ (หรือแตะบนมือถือ) เพื่อดูที่มาของ XP */}
+                        {isAdminViewer && (
+                        <div
+                          className={`hidden group-hover:block group-focus:block absolute right-0 z-40 w-64 rounded-2xl bg-white border-2 border-indigo-200 shadow-2xl p-3 text-left pointer-events-none ${
+                            popupAbove ? 'bottom-full mb-2' : 'top-full mt-2'
+                          }`}
+                        >
+                          <p className="text-xs font-black text-gray-800 mb-2">✨ XP ของ {item.display_name} มาจากไหน</p>
+                          {bd ? (
+                            <div className="space-y-2">
+                              <div className="rounded-xl bg-emerald-50 border border-emerald-200 px-3 py-2">
+                                <p className="text-xs font-black text-emerald-700">📝 ทำข้อสอบจริง: {problemXp} XP</p>
+                                <p className="text-[11px] font-bold text-emerald-600">
+                                  ตอบถูก {bd.solved || 0} ข้อ • เคยลองทำ {bd.attempted || 0} ข้อ
+                                </p>
+                              </div>
+                              <div className="rounded-xl bg-purple-50 border border-purple-200 px-3 py-2">
+                                <p className="text-xs font-black text-purple-700">🎯 ได้จากอย่างอื่น: {nonProblemXp} XP</p>
+                                {nonProblemXp > 0 && (
+                                  <div className="text-[11px] font-bold text-purple-600 space-y-0.5 mt-0.5">
+                                    {questXp > 0 && <p>🌟 ภารกิจพิเศษ {questXp} XP</p>}
+                                    {giftXp > 0 && <p>🎁 กล่องของขวัญ Streak {giftXp} XP</p>}
+                                    {otherXp > 0 && <p>🔧 อื่นๆ (โบนัสเก่า/ครูปรับให้) {otherXp} XP</p>}
+                                  </div>
+                                )}
+                              </div>
+                              <div className="h-2 rounded-full bg-purple-200 overflow-hidden">
+                                <div className="h-full bg-emerald-500" style={{ width: `${problemPct}%` }} />
+                              </div>
+                              <p className="text-[10px] font-bold text-gray-400">
+                                ข้อสอบจริง {problemPct}% ของ XP ทั้งหมด (นับ 1 XP ต่อข้อที่ตอบถูกครั้งแรก)
+                              </p>
+                            </div>
+                          ) : (
+                            <p className="text-[11px] font-bold text-gray-400">ยังไม่มีข้อมูลที่มาของ XP</p>
+                          )}
+                        </div>
+                        )}
                       </div>
                     </div>
                   </div>
