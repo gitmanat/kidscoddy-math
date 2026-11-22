@@ -69,6 +69,7 @@ export default function UploadQuestsAdminPage() {
           description: q.description || '',
           reward_coins: q.reward_coins || 10,
           reward_xp: q.reward_xp || 15,
+          min_percent: Math.min(100, Math.max(0, Number(q.min_percent ?? 50))), // ต้องตอบถูกอย่างน้อยกี่ % ถึงจะได้รางวัล
           target_set_id: q.target_set_id,
           is_active: q.is_active ?? true,
           start_date: dayStartIso(day),
@@ -185,7 +186,7 @@ export default function UploadQuestsAdminPage() {
               rows={10}
               value={jsonInput}
               onChange={(e) => setJsonInput(e.target.value)}
-              placeholder={`[\n  {\n    "title": "ภารกิจพิชิตเศษส่วน",\n    "description": "...",\n    "reward_coins": 20,\n    "reward_xp": 20,\n    "target_set_id": "<uuid ของชุดโจทย์>",\n    "start_date": "2026-11-18",   // ไม่บังคับ (ไม่ใส่ = ใช้วันที่จากข้อ 3)\n    "end_date": "2026-11-25"      // ไม่บังคับ (ไม่ใส่ = ไม่หมดเขต)\n  }\n]`}
+              placeholder={`[\n  {\n    "title": "ภารกิจพิชิตเศษส่วน",\n    "description": "...",\n    "reward_coins": 20,\n    "reward_xp": 20,\n    "min_percent": 50,   // ไม่บังคับ: ต้องตอบถูกอย่างน้อยกี่ % ถึงได้รางวัล (ไม่ใส่ = 50)\n    "target_set_id": "<uuid ของชุดโจทย์>",\n    "start_date": "2026-11-18",   // ไม่บังคับ (ไม่ใส่ = ใช้วันที่จากข้อ 3)\n    "end_date": "2026-11-25"      // ไม่บังคับ (ไม่ใส่ = ไม่หมดเขต)\n  }\n]`}
               className="w-full p-4 rounded-2xl border border-gray-200 focus:ring-2 focus:ring-indigo-500 outline-none font-mono text-xs text-gray-800 bg-gray-50"
             />
           </div>

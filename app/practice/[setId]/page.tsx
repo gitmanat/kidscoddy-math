@@ -389,31 +389,26 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
         let bonusXP = 0
         let bonusCoins = 0
 
-        // 🌟 3. เช็กเงื่อนไขภารกิจพิเศษ (Special Quests)
-        const { data: questMatch } = await supabase
-          .from('special_quests')
-          .select('*')
-          .eq('target_set_id', setId)
-          .eq('is_active', true)
-          .maybeSingle()
+        // 🌟 3. ภารกิจพิเศษ: รางวัลตามเปอร์เซ็นต์ข้อที่ตอบถูก
+        //    เซิร์ฟเวอร์นับข้อที่ถูกจาก submissions จริง (ตอบมั่วจนถูกน้อยกว่าเกณฑ์ = ไม่ได้รางวัล)
+        const { data: questRes, error: questErr } = await supabase.rpc('award_special_quest', {
+          p_user_id: student.id,
+          p_set_id: setId,
+        })
 
-        if (questMatch) {
-          const { data: alreadyDone } = await supabase
-            .from('quest_completions')
-            .select('id')
-            .eq('user_id', student.id)
-            .eq('quest_id', questMatch.id)
-            .maybeSingle()
-
-          if (!alreadyDone && stars >= 1) {
-            await supabase.from('quest_completions').insert({
-              user_id: student.id,
-              quest_id: questMatch.id,
-            })
-
-            bonusXP += (questMatch.reward_xp || 15)
-            bonusCoins += (questMatch.reward_coins || 10)
-            bonusMsg += `⭐ พิชิตภารกิจพิเศษ "${questMatch.title}" สำเร็จ! รับรางวัล +${questMatch.reward_coins} Coins และ +${questMatch.reward_xp} XP!`
+        if (questErr) {
+          console.error('award_special_quest failed:', questErr)
+        } else if (questRes?.ok && questRes.has_quest) {
+          const qTitle = questRes.quest_title
+          if (questRes.awarded) {
+            bonusXP += questRes.xp || 0
+            bonusCoins += questRes.coins || 0
+            const rest = questRes.percent < 100 ? ' ทำอีกครั้งให้ถูกมากขึ้นเพื่อเก็บรางวัลที่เหลือได้นะ' : ''
+            bonusMsg += `⭐ ภารกิจพิเศษ "${qTitle}" ตอบถูก ${questRes.percent}% รับรางวัล +${questRes.coins} Coins และ +${questRes.xp} XP!${rest}`
+          } else if (questRes.reason === 'below_min') {
+            bonusMsg += `🎯 ภารกิจพิเศษ "${qTitle}" ตอบถูก ${questRes.percent}% ต้องถูกอย่างน้อย ${questRes.min_percent}% ถึงจะได้รางวัล ลองทำอีกครั้งนะ 💪`
+          } else if (questRes.reason === 'no_improvement' && questRes.best_percent < 100) {
+            bonusMsg += `ภารกิจพิเศษ "${qTitle}" คะแนนสูงสุดของคุณคือ ${questRes.best_percent}% ทำให้ได้มากกว่านี้เพื่อรับรางวัลเพิ่ม`
           }
         }
 

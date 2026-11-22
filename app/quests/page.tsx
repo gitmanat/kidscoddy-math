@@ -50,6 +50,8 @@ export default function SpecialQuestsPage() {
   const [student, setStudent] = useState<any>(null)
   const [quests, setQuests] = useState<any[]>([])
   const [completedQuests, setCompletedQuests] = useState<string[]>([])
+  // เปอร์เซ็นต์สูงสุดที่ตัวเองเคยทำได้ในแต่ละภารกิจ { [questId]: percent } (ใช้โชว์/ให้ทำซ้ำเมื่อยังไม่เต็ม)
+  const [myBestPercent, setMyBestPercent] = useState<Record<string, number>>({})
   // เก็บรายชื่อเพื่อนที่พิชิตแต่ละภารกิจแล้ว { [questId]: any[] }
   const [questCompletionsByQuest, setQuestCompletionsByQuest] = useState<Record<string, any[]>>({})
   const [loading, setLoading] = useState(true)
@@ -98,6 +100,7 @@ export default function SpecialQuestsPage() {
           quest_id,
           user_id,
           completed_at,
+          best_percent,
           users (
             id,
             display_name,
@@ -126,12 +129,16 @@ export default function SpecialQuestsPage() {
 
       // 4. จัดกลุ่มรายชื่อผู้พิชิตตาม quest_id และเช็กว่าตัวเราเองทำภารกิจไหนไปแล้วบ้าง
       const myDoneIds: string[] = []
+      const myBest: Record<string, number> = {}
       const groupedByQuest: Record<string, any[]> = {}
 
       if (allQuestComps) {
         allQuestComps.forEach((item: any) => {
           if (item.user_id === userId) {
-            myDoneIds.push(item.quest_id)
+            const pct = item.best_percent ?? 100
+            myBest[item.quest_id] = pct
+            // นับว่า "พิชิตแล้ว" เมื่อได้รางวัลเต็ม 100% ถ้ายังไม่เต็มให้ทำซ้ำเพื่อเก็บเพิ่มได้
+            if (pct >= 100) myDoneIds.push(item.quest_id)
           }
 
           if (!groupedByQuest[item.quest_id]) {
@@ -144,7 +151,8 @@ export default function SpecialQuestsPage() {
           if (userObj && questObj) {
             const setScoreInfo = scoreMap[`${item.user_id}_${questObj.target_set_id}`] || { score: 0, total: 0 }
             // คอยน์รวมที่ได้ = คะแนนที่ทำได้ในชุดนั้น + รางวัลคอยน์พิเศษของเควส
-            const totalCoinsEarned = setScoreInfo.score + (questObj.reward_coins || 0)
+            const totalCoinsEarned =
+              setScoreInfo.score + Math.round((questObj.reward_coins || 0) * ((item.best_percent ?? 100) / 100))
 
             groupedByQuest[item.quest_id].push({
               ...userObj,
@@ -162,6 +170,7 @@ export default function SpecialQuestsPage() {
       }
 
       setCompletedQuests(myDoneIds)
+      setMyBestPercent(myBest)
       setQuestCompletionsByQuest(groupedByQuest)
     } catch (err) {
       console.error('Error fetching quests:', err)
@@ -583,6 +592,14 @@ export default function SpecialQuestsPage() {
 
                     <h3 className={`text-base md:text-lg font-black pt-1 ${isOpen ? 'text-white drop-shadow-sm' : 'text-gray-800'}`}>{quest.title}</h3>
                     <p className={`text-xs leading-relaxed ${isOpen ? 'text-white/90' : 'text-gray-500'}`}>{quest.description || 'ทำภารกิจชุดนี้ให้สำเร็จเพื่อรับรางวัลพิเศษ'}</p>
+                    <p className={`text-[11px] font-bold ${isOpen ? 'text-yellow-100' : 'text-gray-500'}`}>
+                      🎯 ได้รางวัลตามเปอร์เซ็นต์ข้อที่ตอบถูก (ต้องถูกอย่างน้อย {quest.min_percent ?? 50}%)
+                    </p>
+                    {myBestPercent[quest.id] !== undefined && !isDone && (
+                      <p className={`text-[11px] font-black ${isOpen ? 'text-white' : 'text-emerald-700'}`}>
+                        ✅ คะแนนสูงสุดของคุณ {myBestPercent[quest.id]}% — ทำอีกครั้งเพื่อเก็บรางวัลที่เหลือ
+                      </p>
+                    )}
 
                     {/* 👩‍🏫 เฉพาะแอดมิน: ย้าย/เปลี่ยนวันเปิดของภารกิจนี้ */}
                     {isAdmin && (
@@ -626,7 +643,7 @@ export default function SpecialQuestsPage() {
                         onClick={() => handleStartQuest(quest.target_set_id)}
                         className="w-full py-3.5 bg-white hover:bg-red-50 text-red-600 text-sm font-black rounded-2xl shadow-lg shadow-red-900/20 transition transform active:scale-95 cursor-pointer"
                       >
-                        🚀 ลุยภารกิจนี้เลย!
+                        {myBestPercent[quest.id] !== undefined ? '🔁 ทำอีกครั้งเพื่อเก็บรางวัลเพิ่ม' : '🚀 ลุยภารกิจนี้เลย!'}
                       </button>
                     )}
                   </div>
