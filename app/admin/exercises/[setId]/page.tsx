@@ -162,6 +162,12 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
   const [savingDate, setSavingDate] = useState(false)
   const [dateMsg, setDateMsg] = useState('')
 
+  // ✏️ State สำหรับแก้ "ชื่อชุด" และ "คำอธิบายย่อย" ของชุดนี้
+  const [setTitleInput, setSetTitleInput] = useState('')
+  const [setDescInput, setSetDescInput] = useState('')
+  const [savingInfo, setSavingInfo] = useState(false)
+  const [infoMsg, setInfoMsg] = useState('')
+
   // State สำหรับฟอร์มแก้ไขโจทย์เดิม
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editOrderNum, setEditOrderNum] = useState(1)
@@ -191,6 +197,47 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
     if (problemSet) setSetDate(getSetDay(problemSet))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [problemSet?.id])
+
+  // ตั้งค่าช่องชื่อ/คำอธิบายครั้งแรกที่โหลดชุดโจทย์ (ผูกกับ id จึงไม่ถูกรีเซ็ตตอนเพิ่ม/แก้โจทย์แล้วโหลดซ้ำ)
+  useEffect(() => {
+    if (problemSet) {
+      setSetTitleInput(problemSet.title || '')
+      setSetDescInput(problemSet.description || '')
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [problemSet?.id])
+
+  const savedTitle = problemSet?.title || ''
+  const savedDesc = problemSet?.description || ''
+  const infoDirty = setTitleInput.trim() !== savedTitle || setDescInput.trim() !== savedDesc
+
+  // บันทึกชื่อชุดและคำอธิบายลง problem_sets.title / problem_sets.description
+  const handleSaveSetInfo = async () => {
+    const title = setTitleInput.trim()
+    const description = setDescInput.trim()
+    if (!title) {
+      setInfoMsg('⚠️ ชื่อชุดแบบฝึกหัดต้องไม่เว้นว่าง')
+      return
+    }
+    setSavingInfo(true)
+    setInfoMsg('')
+    const { error } = await supabase.from('problem_sets').update({ title, description }).eq('id', setId)
+    if (error) {
+      setInfoMsg(`❌ บันทึกไม่สำเร็จ: ${error.message}`)
+    } else {
+      setProblemSet((prev: any) => ({ ...prev, title, description }))
+      setSetTitleInput(title)
+      setSetDescInput(description)
+      setInfoMsg('✅ บันทึกชื่อและคำอธิบายเรียบร้อยแล้ว')
+    }
+    setSavingInfo(false)
+  }
+
+  const handleResetSetInfo = () => {
+    setSetTitleInput(savedTitle)
+    setSetDescInput(savedDesc)
+    setInfoMsg('')
+  }
 
   const savedDate = getSetDay(problemSet)
   const dateDirty = !!setDate && setDate !== savedDate
@@ -455,6 +502,56 @@ function AdminProblemContent({ params }: { params: Promise<{ setId: string }> })
 
       {/* Main */}
       <main className="max-w-4xl mx-auto px-6 mt-8">
+        {/* ✏️ แก้ชื่อชุดและคำอธิบายย่อยได้ที่นี่เลย ไม่ต้องไปแก้ในฐานข้อมูล */}
+        <div className="bg-white/95 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-purple-100 mb-6 space-y-4">
+          <div className="space-y-1.5">
+            <label className="block text-xs font-extrabold text-gray-700">✏️ ชื่อชุดแบบฝึกหัด</label>
+            <input
+              type="text"
+              value={setTitleInput}
+              onChange={(e) => {
+                setSetTitleInput(e.target.value)
+                setInfoMsg('')
+              }}
+              placeholder="เช่น บวกลบเลขสองหลัก"
+              className="w-full px-4 py-2.5 rounded-2xl border border-gray-200 bg-white text-sm font-bold text-gray-800 outline-none focus:ring-2 focus:ring-purple-400"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <label className="block text-xs font-extrabold text-gray-700">📝 คำอธิบายย่อย (นักเรียนเห็นใต้ชื่อชุดในหน้าหลัก)</label>
+            <textarea
+              rows={2}
+              value={setDescInput}
+              onChange={(e) => {
+                setSetDescInput(e.target.value)
+                setInfoMsg('')
+              }}
+              placeholder="เช่น ฝึกบวกลบเลขสองหลักแบบมีการทด"
+              className="w-full px-4 py-2.5 rounded-2xl border border-gray-200 bg-white text-sm text-gray-800 outline-none focus:ring-2 focus:ring-purple-400 resize-y"
+            />
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <button
+              type="button"
+              onClick={handleSaveSetInfo}
+              disabled={!infoDirty || savingInfo}
+              className="px-5 py-2.5 bg-purple-600 hover:bg-purple-700 disabled:opacity-40 disabled:cursor-not-allowed text-white font-extrabold text-xs rounded-2xl shadow-md transition cursor-pointer"
+            >
+              {savingInfo ? 'กำลังบันทึก...' : infoDirty ? '💾 บันทึกชื่อและคำอธิบาย' : '✓ บันทึกแล้ว'}
+            </button>
+            {infoDirty && !savingInfo && (
+              <button
+                type="button"
+                onClick={handleResetSetInfo}
+                className="px-4 py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-600 font-extrabold text-xs rounded-2xl transition cursor-pointer"
+              >
+                ↩️ ยกเลิกการแก้ไข
+              </button>
+            )}
+            {infoMsg && <span className="text-xs font-bold text-gray-600">{infoMsg}</span>}
+          </div>
+        </div>
+
         {/* 📅 วันของการบ้านชุดนี้ — นักเรียนจะเห็นชุดนี้ตามวันที่กำหนด */}
         <div className="bg-white/95 backdrop-blur-sm p-5 md:p-6 rounded-3xl shadow-sm border border-purple-100 mb-6 flex flex-col md:flex-row md:items-end justify-between gap-4">
           <AssignDateField value={setDate} onChange={(v) => { setSetDate(v); setDateMsg('') }} label="📅 วันของการบ้านชุดนี้" />
