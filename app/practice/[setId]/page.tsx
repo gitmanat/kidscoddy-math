@@ -824,6 +824,7 @@ function PracticeContent({ params }: { params: Promise<{ setId: string }> }) {
                   { label: '×', val: '*' },
                   { label: '÷', val: '/' },
                   { label: ':', val: ':' },
+                  { label: ',', val: ',' },
                   { label: '=', val: '=' },
                   { label: '≠', val: '!=' },
                   { label: '>', val: '>' },
